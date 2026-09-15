@@ -1,0 +1,11 @@
+# dsh-session-steward bundle patch
+#
+# 通过官方 CLI 安装时 ——
+#
+#   dsh plugin --profile <name> add dsh-session-steward
+#
+# —— 命令会把 `dsh-session-steward` 追加到 bundle 栈，profile 启动时合并本补丁
+# （单个 insert，插入本插件行）。
+- insert:
+    - id: dsh-session-steward
+      name: 'dsh-session-steward'
