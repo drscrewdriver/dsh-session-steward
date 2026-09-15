@@ -44,22 +44,34 @@
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('lib',{recursive:true,force:true})\" && tsc -b && tsdown",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run"
   },
   "files": [
     "lib/index.js",
+    "lib/index.d.ts",
     "lib/client.js",
-    "lib/types/**/*.d.ts",
     "src",
     "cordis.patch.yml",
+    "dsh.plugin.json",
+    "screenshots.json",
     "README.md",
     "README.en.md",
+    "README.ja.md",
+    "README.ko.md",
+    "INSTALL.md",
+    "INSTALL.zh.md",
+    "INSTALL.ja.md",
+    "INSTALL.ko.md",
     "CHANGELOG.md",
+    "CHANGELOG.ja.md",
+    "CHANGELOG.ko.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.1.0-rc.6 <0.2.0-0"
   },
   "license": "MIT",
   "peerDependencies": {
