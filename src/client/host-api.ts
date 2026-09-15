@@ -1,0 +1,135 @@
+/**
+ * 客户端 host 调用助手：一切经 fenced `/session-steward/api/<method>` 路由，
+ * 不 value-import 任何官方包（与 dsh-session-search-toggle 的 host-api.ts 同范式，
+ * 仅把路由前缀换成会话管家自己的）。
+ */
+
+/** 单次 host 调用超时（导入类大响应可单独放宽）。 */
+const FETCH_TIMEOUT = 20_000
+
+/** POST 一个 JSON body 到会话管家的 fenced API（items 形状）。 */
+export function callHost<T>(method: string, body: unknown): Promise<{ ok: boolean; items: T[]; error?: string }> {
+  const controller = typeof AbortController === 'undefined' ? undefined : new AbortController()
+  const timer = controller !== undefined && typeof setTimeout === 'function'
+    ? setTimeout(() => { controller.abort() }, FETCH_TIMEOUT)
+    : undefined
+  return fetch(`/session-steward/api/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller?.signal,
+  })
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+    .then((data: unknown) => {
+      const record = data as { ok?: boolean; items?: T[]; error?: string }
+      if (record && record.ok === true && Array.isArray(record.items)) {
+        return { ok: true, items: record.items }
+      }
+      return { ok: false, items: [], error: record?.error ?? '请求失败' }
+    })
+    .catch((err: unknown) => ({
+      ok: false,
+      items: [],
+      error: err instanceof DOMException && err.name === 'AbortError' ? '请求超时' : String(err instanceof Error ? err.message : err),
+    }))
+    .finally(() => {
+      if (timer !== undefined) clearTimeout(timer)
+    })
+}
+
+/** POST 一个 JSON body，返回整条记录。 */
+export function callHostAny<T>(
+  method: string,
+  body: unknown,
+  timeout = FETCH_TIMEOUT,
+): Promise<Partial<T> & { ok: boolean; error?: string }> {
+  const controller = typeof AbortController === 'undefined' ? undefined : new AbortController()
+  const timer = typeof setTimeout === 'function'
+    ? setTimeout(() => { controller?.abort() }, timeout)
+    : undefined
+  return fetch(`/session-steward/api/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller?.signal,
+  })
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+    .catch((err: unknown) => ({
+      ok: false,
+      error: err instanceof DOMException && err.name === 'AbortError' ? '请求超时' : String(err instanceof Error ? err.message : err),
+    }))
+    .finally(() => {
+      if (timer !== undefined) clearTimeout(timer)
+    })
+}
+
+/** 一条历史文件行（与 host 侧 StewardHistoryRow 对齐）。 */
+export interface HistoryRow {
+  sessionId: string
+  title: string
+  cwd: string
+  updatedAt: number
+}
+
+/** 历史文件列表响应。 */
+export interface HistoryListResponse {
+  ok: boolean
+  items?: HistoryRow[]
+  source?: 'registry' | 'storage-file' | 'none'
+  degraded?: string
+  error?: string
+}
+
+/** 一个 gate 的结果（与 host 侧 GateResult 对齐）。 */
+export interface HealthGate {
+  id: 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
+  level: 'ok' | 'warn' | 'fail'
+  evidence: string
+  attribution?: { projection?: string; package?: string; field?: string }
+  detail?: Record<string, unknown>
+}
+
+/** 单会话体检报告。 */
+export interface HealthReport {
+  sessionId: string
+  level: 'ok' | 'warn' | 'fail'
+  gates: HealthGate[]
+  generatedAt: number
+}
+
+/** 体检扫描响应。 */
+export interface HealthScanResponse {
+  ok: boolean
+  scanned?: number
+  findings?: HealthReport[]
+  error?: string
+}
+
+/** 单会话体检响应。 */
+export interface HealthSessionResponse {
+  ok: boolean
+  report?: HealthReport
+  prescriptions?: string[]
+  error?: string
+}
+
+/** 出院（可逆处置）响应。 */
+export interface HealthRepairResponse {
+  ok: boolean
+  changed?: boolean
+  before?: HealthReport
+  after?: HealthReport
+  repair?: { ok: boolean; from?: string; to?: string; error?: string; requiresRestart?: boolean }
+  prescriptions?: string[]
+  error?: string
+}
+
+/** 状态响应。 */
+export interface HealthStatusResponse {
+  ok: boolean
+  switches?: { enabled: boolean; historyFiles: boolean; healthCheck: boolean }
+  historyMethods?: string[]
+  healthMethods?: string[]
+  home?: string
+  error?: string
+}
