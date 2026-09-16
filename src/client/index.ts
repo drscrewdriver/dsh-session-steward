@@ -58,11 +58,11 @@ function injectStyles(): () => void {
   const style = document.createElement('style')
   style.id = id
   style.textContent = `
-.dss_entryWrap{flex:none;display:inline-flex;align-items:center;min-width:0}
-.dss_entryWrapWide{margin-left:8px}
-.dss_footerEntry{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:42px;padding:0 12px 0 10px;border:none;border-radius:12px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;line-height:22px;white-space:nowrap;overflow:hidden;transition:background-color 160ms ease-out,color 160ms ease-out}
+.dss_entryWrap{flex:0 1 auto;display:inline-flex;align-items:center;min-width:0}
+.dss_entryWrapWide{margin-left:6px}
+.dss_footerEntry{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:42px;padding:0 10px 0 8px;border:none;border-radius:12px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;line-height:22px;white-space:nowrap;overflow:hidden;transition:background-color 160ms ease-out,color 160ms ease-out}
 .dss_footerEntry:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dss_footerEntryRail{width:36px;height:36px;padding:0;gap:0;border-radius:50%}
+.dss_footerEntryRail{width:28px;height:28px;padding:0;gap:0;border-radius:50%}
 .dss_footerIcon{flex:none;font-size:15px;line-height:1}
 .dss_footerLabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dss_backdrop{position:fixed;inset:0;background:rgba(15,20,30,.42);z-index:1000}
