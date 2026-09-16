@@ -1,17 +1,28 @@
 # dsh-session-steward（会话管家 / Session Steward）
 
-DSH Web 插件：**会话历史文件 + 会话健康检查**。它只做两件事，且都不碰会话数据本身：
+DSH Web 插件：**会话历史文件 + 会话健康检查**。
 
-- **养老院（会话历史文件）**：浏览官方归档集合、批量清理（备份 + 原子替换，需重启宿主生效）。
+- **养老院（会话历史文件）**：浏览官方归档集合，两个**独立**操作 ——
+  **取消归档状态**（只改数组，可逆）与 **清理归档文件**（真删磁盘实体，不可逆）。
 
-> **清理语义与两条硬约束**（照做，否则清理会白做）：
-> 1. **列表与清理同源** —— 两边都认存储文件 `~/.dsh/storages/workspace.json` 的
->    `global.archivedSessionIds`。宿主内存里的 `workspaceRegistry` 是启动快照，
->    清理写不到它，只作为「已出文件、仍生效」的诊断面（`pendingRestart`）。
-> 2. **清理后立刻重启 DSH** —— 存储层是全量重写、内存为准：宿主退出前**任何**归档或
->    工作区改动都会把旧集合整份写回，本次清理归零。
+> **两个操作不可互换，也不能合并**：
 >
-> 清理 = 从归档数组移除（会话重新回到侧边栏），**不是删除会话数据**。
+> | | 取消归档状态 | 清理归档文件 |
+> |---|---|---|
+> | 路由 | `session-history-prune` | `session-history-purge` |
+> | 改什么 | 只改 `global.archivedSessionIds` | 删磁盘实体 + 改归档数组 + 改工作区成员表 |
+> | 会话去向 | 回到侧边栏原工作区 | 从世界上消失 |
+> | 可逆 | ✅ | ❌ |
+>
+> **清理必然连带取消归档** —— 否则会留下「侧边栏看不见、一取消归档就变成空会话」的僵尸 id。
+> 体积**按行**显示（实测单条可从 0 到 23 MB），按钮给所选小计。
+>
+> **两条硬约束**（照做，否则操作会白做）：
+> 1. **列表与写入同源** —— 都认存储文件 `~/.dsh/storages/workspace.json`。宿主内存里的
+>    `workspaceRegistry` 是启动快照，改文件写不到它，只作为「已出文件、仍生效」的诊断面
+>    （`pendingRestart`）。
+> 2. **操作后立刻重启 DSH** —— 存储层是全量重写、内存为准：宿主退出前**任何**归档或
+>    工作区改动都会把旧状态整份写回，本次操作归零。
 - **体检（健康检查 / 会话医生）**：四门体检 → 处方（命令清单）→ 出院（可逆处置 + before/after 对照）。
 
 > 命名边界：**本插件不提供搜索与索引**。搜索/独立索引属于另一片（`dsh-search-index`），
@@ -34,8 +45,9 @@ dsh plugin --profile web add "link:E:/test/rewrite-agently/mine-dsh-plugins/dsh-
 
 | 方法 | 子域 | 作用 |
 |---|---|---|
-| `session-history-list` | history | 列出归档集合（存储文件优先；含来源、降级与 `pendingRestart` 标注） |
-| `session-history-prune` | history | 从归档数组批量移除 id（自动备份，需重启） |
+| `session-history-list` | history | 列出归档集合（存储文件优先；含来源、降级、按行体积与 `pendingRestart` 标注） |
+| `session-history-prune` | history | **取消归档状态**：从归档数组批量移除 id（自动备份，需重启） |
+| `session-history-purge` | history | **清理归档文件**：真删转录目录 + 投影缓存 + 两处 id（**不可逆**） |
 | `session-health-status` | health | 开关状态与方法表（面板轮询用） |
 | `session-health-scan` | health | 批量体检（默认只返回非 ok 的会话） |
 | `session-health-session` | health | 单会话四门报告 + 处方 |

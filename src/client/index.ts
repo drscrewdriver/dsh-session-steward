@@ -82,6 +82,8 @@ function injectStyles(): () => void {
 .dss_meta{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af)}
 .dss_metaLine{font-size:11px;color:var(--dsw-alias-label-tertiary,#9ca3af)}
 .dss_uuid{font-family:var(--ds-font-family-code,monospace)}
+/* 按行的磁盘占用：右对齐、不参与标题压缩，方便纵向比对「哪条最占地方」。 */
+.dss_size{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
 .dss_check{display:inline-flex;align-items:center}
 .dss_status{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280)}
 .dss_warnText{color:var(--dsw-alias-state-warning-primary,#d97706)}

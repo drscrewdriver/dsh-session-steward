@@ -95,12 +95,59 @@ export function readArchiveSet(registry?: StewardRegistryFace, searchPaths?: rea
   return { ids: [], source: 'none' }
 }
 
+/** 一次存储文件编辑的结果。 */
+export type StewardEditOutcome =
+  | { ok: true; changed: boolean; file: string }
+  | { ok: false; reason: string }
+
 /**
- * 从存储中枢的 global.archivedSessionIds 中移除会话 id。
+ * **本插件写 workspace.json 的唯一入口。**
  *
- * 官方后端没有 unarchive 端点，因此直接编辑规范文件，遵循 storage-json 自身的协议：
- * 备份、同目录临时写入、改名。运行中的宿主把集合留在内存里、只在启动时重载 ——
- * 调用方必须提示需要重启 DSH。
+ * 任何「改归档集合 / 改工作区成员表」都必须走这里 —— 出现第二个写文件的实现，
+ * 就会重现「读的人和写的人不是同一份数据」那类问题。
+ *
+ * 协议与 storage-json 自身一致：读 → `edit(document)` 就地改 → 备份 → 同目录临时写入
+ * → 原子改名。`edit` 返回 `false` 表示无需写入（此时**不产生备份**）。
+ * @param path - 规范存储文件路径。
+ * @param edit - 就地修改文档；返回是否真的改了。
+ * @param log - 可选日志出口。
+ * @returns 编辑结果；失败时给出原因而非抛错。
+ */
+export function editWorkspaceDocument(
+  path: string,
+  edit: (document: Record<string, unknown>) => boolean,
+  log?: (msg: string) => void,
+): StewardEditOutcome {
+  if (!existsSync(path)) return { ok: false, reason: `存储文件不存在：${path}` }
+  let document: Record<string, unknown>
+  try {
+    document = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  } catch (err) {
+    return { ok: false, reason: `无法解析 "${path}"：${String(err instanceof Error ? err.message : err)}` }
+  }
+  let changed: boolean
+  try {
+    changed = edit(document)
+  } catch (err) {
+    return { ok: false, reason: `编辑 "${path}" 失败：${String(err instanceof Error ? err.message : err)}` }
+  }
+  if (!changed) return { ok: true, changed: false, file: path }
+  // 在文件旁备份，然后原子替换（tmp + rename），序列化与 storage-json 一致。
+  const backup = `${path}.bak-${Date.now()}`
+  copyFileSync(path, backup)
+  const tmp = `${path}.prune-tmp`
+  writeFileSync(tmp, `${JSON.stringify(document, null, 2)}
+`, 'utf8')
+  renameSync(tmp, path)
+  log?.(`workspace.json edited; backup=${backup}`)
+  return { ok: true, changed: true, file: path }
+}
+
+/**
+ * 从存储中枢的 `global.archivedSessionIds` 中移除会话 id（= 取消归档状态）。
+ *
+ * 官方后端没有 unarchive 端点，因此直接编辑规范文件；运行中的宿主把集合留在内存里、
+ * 只在启动时重载 —— 调用方必须提示需要重启 DSH。
  * @param ids - 要从归档数组中移除的会话 id。
  * @param log - 可选日志出口。
  * @param searchPaths - 可选候选路径覆盖（测试注入用）。
@@ -116,35 +163,26 @@ export function pruneArchiveFile(
   file?: string
 } {
   const wanted = new Set(ids)
+  let lastReason = 'workspace storage file not found (searched ~/.dsh/storages/workspace.json)'
   for (const path of searchPaths ?? storageFileCandidates()) {
-    if (!existsSync(path)) continue
-    let document: { global?: { archivedSessionIds?: unknown }; [key: string]: unknown }
-    try {
-      document = JSON.parse(readFileSync(path, 'utf8')) as typeof document
-    } catch (err) {
-      log?.(`archive prune: cannot parse "${path}": ${String(err instanceof Error ? err.message : err)}`)
-      continue
-    }
-    const current = document.global?.archivedSessionIds
-    if (!Array.isArray(current)) {
-      log?.(`archive prune: "${path}" holds no global.archivedSessionIds array`)
-      continue
-    }
-    const kept = current.filter((id): id is string => typeof id === 'string' && !wanted.has(id))
-    const removed = current.length - kept.length
-    if (removed === 0) return { removed: 0, remaining: current.length, file: path }
-    // 在文件旁备份，然后原子替换（tmp + rename），与 storage-json 的发布协议及 2 空格序列化一致。
-    const backup = `${path}.bak-${Date.now()}`
-    copyFileSync(path, backup)
-    const next = { ...document, global: { ...document.global, archivedSessionIds: kept } }
-    const tmp = `${path}.prune-tmp`
-    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}
-`, 'utf8')
-    renameSync(tmp, path)
-    log?.(`archive prune: removed ${removed} of ${current.length} ids; backup=${backup}`)
-    return { removed, remaining: kept.length, file: path }
+    let removed = 0
+    let remaining = 0
+    const outcome = editWorkspaceDocument(path, (document) => {
+      const global = document.global as { archivedSessionIds?: unknown } | undefined
+      const current = global?.archivedSessionIds
+      if (!Array.isArray(current)) throw new Error(`storage hub "${path}" holds no global.archivedSessionIds array`)
+      const kept = current.filter((id): id is string => typeof id === 'string' && !wanted.has(id))
+      removed = current.length - kept.length
+      remaining = kept.length
+      if (removed === 0) return false
+      document.global = { ...global, archivedSessionIds: kept }
+      return true
+    }, log)
+    if (!outcome.ok) { lastReason = outcome.reason; continue }
+    if (outcome.changed) log?.(`archive prune: removed ${removed} ids; remaining ${remaining}`)
+    return { removed, remaining, file: outcome.file }
   }
-  throw new Error('workspace storage file not found (searched ~/.dsh/storages/workspace.json)')
+  throw new Error(lastReason)
 }
 
 /** 构造同步器期望的惰性来源面，并记录诊断。 */

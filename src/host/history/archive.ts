@@ -15,13 +15,18 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { pruneArchiveFile, readArchiveSet, type StewardRegistryFace } from './archive-source.ts'
+import { locateSessionUsage } from './purge.ts'
 
-/** 一行历史文件条目（尽力而为的元数据）。 */
+/** 一行历史文件条目（尽力而为的元数据 + 磁盘占用）。 */
 export interface StewardHistoryRow {
   sessionId: string
   title: string
   cwd: string
   updatedAt: number
+  /** 转录目录占用字节数（未知/未解析时为 0）。 */
+  bytes: number
+  /** 投影缓存占用字节数。 */
+  cacheBytes: number
 }
 
 /** 列表结果。 */
@@ -76,6 +81,7 @@ export async function listHistory(
   getRegistry: () => StewardRegistryFace | undefined,
   query?: StewardTitleQueryFace,
   searchPaths?: readonly string[],
+  dshHome?: string,
 ): Promise<StewardHistoryListResult> {
   const read = readArchiveSet(getRegistry(), searchPaths)
   if (read.source === 'none') {
@@ -99,8 +105,21 @@ export async function listHistory(
   }
   const items: StewardHistoryRow[] = ids.map((sessionId) => {
     const title = titles.get(sessionId) ?? titleFromProjectionCache(sessionId)
-    return { sessionId, title, cwd: '', updatedAt: 0 }
+    return { sessionId, title, cwd: '', updatedAt: 0, bytes: 0, cacheBytes: 0 }
   })
+  // 按行的磁盘占用：**以单元为单位**算，不给一个总量糊弄（实测单条可从 0 到 23 MB）。
+  // 未提供 dshHome 时保持 0 —— 调方拿不到主目录就不猜路径。
+  if (dshHome !== undefined && dshHome !== '' && items.length > 0) {
+    try {
+      const usage = locateSessionUsage(ids, dshHome)
+      for (const item of items) {
+        const entry = usage.get(item.sessionId)
+        if (entry === undefined) continue
+        item.bytes = entry.bytes
+        item.cacheBytes = entry.cacheBytes
+      }
+    } catch { /* 体积是尽力而为，读不到不影响列表本身 */ }
+  }
   // 悬挂项：宿主内存里还留着、文件里已经没有了 —— 这些是「清理已落盘但尚未生效」的 id。
   const fileIds = new Set(ids)
   const pendingRestart = (read.registryIds ?? []).filter((id) => !fileIds.has(id)).length

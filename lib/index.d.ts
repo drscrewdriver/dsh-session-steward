@@ -510,12 +510,34 @@ interface StewardRegistryFace {
  * @returns 归档 ids、服务它的来源，以及宿主内存里的同一集合。
  */
 declare function readArchiveSet(registry?: StewardRegistryFace, searchPaths?: readonly string[]): StewardArchiveRead;
+/** 一次存储文件编辑的结果。 */
+type StewardEditOutcome = {
+  ok: true;
+  changed: boolean;
+  file: string;
+} | {
+  ok: false;
+  reason: string;
+};
 /**
- * 从存储中枢的 global.archivedSessionIds 中移除会话 id。
+ * **本插件写 workspace.json 的唯一入口。**
  *
- * 官方后端没有 unarchive 端点，因此直接编辑规范文件，遵循 storage-json 自身的协议：
- * 备份、同目录临时写入、改名。运行中的宿主把集合留在内存里、只在启动时重载 ——
- * 调用方必须提示需要重启 DSH。
+ * 任何「改归档集合 / 改工作区成员表」都必须走这里 —— 出现第二个写文件的实现，
+ * 就会重现「读的人和写的人不是同一份数据」那类问题。
+ *
+ * 协议与 storage-json 自身一致：读 → `edit(document)` 就地改 → 备份 → 同目录临时写入
+ * → 原子改名。`edit` 返回 `false` 表示无需写入（此时**不产生备份**）。
+ * @param path - 规范存储文件路径。
+ * @param edit - 就地修改文档；返回是否真的改了。
+ * @param log - 可选日志出口。
+ * @returns 编辑结果；失败时给出原因而非抛错。
+ */
+declare function editWorkspaceDocument(path: string, edit: (document: Record<string, unknown>) => boolean, log?: (msg: string) => void): StewardEditOutcome;
+/**
+ * 从存储中枢的 `global.archivedSessionIds` 中移除会话 id（= 取消归档状态）。
+ *
+ * 官方后端没有 unarchive 端点，因此直接编辑规范文件；运行中的宿主把集合留在内存里、
+ * 只在启动时重载 —— 调用方必须提示需要重启 DSH。
  * @param ids - 要从归档数组中移除的会话 id。
  * @param log - 可选日志出口。
  * @param searchPaths - 可选候选路径覆盖（测试注入用）。
@@ -725,12 +747,16 @@ declare class HealthCache {
 }
 //#endregion
 //#region src/host/history/archive.d.ts
-/** 一行历史文件条目（尽力而为的元数据）。 */
+/** 一行历史文件条目（尽力而为的元数据 + 磁盘占用）。 */
 interface StewardHistoryRow {
   sessionId: string;
   title: string;
   cwd: string;
   updatedAt: number;
+  /** 转录目录占用字节数（未知/未解析时为 0）。 */
+  bytes: number;
+  /** 投影缓存占用字节数。 */
+  cacheBytes: number;
 }
 /** 列表结果。 */
 interface StewardHistoryListResult {
@@ -767,7 +793,7 @@ interface StewardTitleQueryFace {
  * @param searchPaths - 可选存储文件候选路径（DSH_HOME 非默认值/测试注入）。
  * @returns 归档行清单。
  */
-declare function listHistory(getRegistry: () => StewardRegistryFace | undefined, query?: StewardTitleQueryFace, searchPaths?: readonly string[]): Promise<StewardHistoryListResult>;
+declare function listHistory(getRegistry: () => StewardRegistryFace | undefined, query?: StewardTitleQueryFace, searchPaths?: readonly string[], dshHome?: string): Promise<StewardHistoryListResult>;
 /** 清理结果。 */
 interface StewardHistoryPruneResult {
   ok: boolean;
@@ -785,6 +811,90 @@ interface StewardHistoryPruneResult {
  * @param searchPaths - 可选候选路径覆盖（测试注入用）。
  */
 declare function pruneHistory(payload: unknown, log?: (msg: string) => void, searchPaths?: readonly string[]): StewardHistoryPruneResult;
+//#endregion
+//#region src/host/history/purge.d.ts
+/** 一个归档会话在磁盘上的实体与占用。 */
+interface StewardSessionUsage {
+  sessionId: string;
+  /** 转录目录绝对路径（不存在时缺省）。 */
+  dir?: string;
+  /** 转录目录占用字节数。 */
+  bytes: number;
+  /** 投影缓存文件绝对路径（不存在时缺省）。 */
+  cacheFile?: string;
+  /** 投影缓存占用字节数。 */
+  cacheBytes: number;
+}
+/** 转录根目录（`<dshHome>/sessions`）。 */
+declare function sessionsRootFor(dshHome: string): string;
+/**
+ * 投影缓存（**逐条布局**）根目录。
+ *
+ * 注意另有一个 `<dshHome>/storages/session_projcache.json`（整份布局）——
+ * 那是布局迁移留下的**化石**，宿主早已不再写它，本插件也不碰它。
+ */
+declare function projCacheRootFor(dshHome: string): string;
+/**
+ * 扫一遍转录根，建立「会话 id → 目录」索引。
+ *
+ * 同一个 id 同时存在带前缀与不带前缀的目录时，**优先带 `session-` 前缀的那个**
+ * （归档集合里的 id 本身带前缀）。
+ * @param sessionsRoot - `<dshHome>/sessions`。
+ * @returns 归一化 id → 目录绝对路径。
+ */
+declare function indexSessionDirs(sessionsRoot: string): Map<string, string>;
+/** 递归求目录占用字节数（读不到的条目跳过，不抛错）。 */
+declare function dirSize(dir: string): number;
+/**
+ * 解析一批会话在磁盘上的实体与占用（**只读，不删任何东西**）。
+ *
+ * 列表按行显示体积就走这里 —— 体积差异极大（实测单条缓存可达 23 MB、单条转录可达
+ * 6 MB，也有 0 字节的），报一个总量对用户没有意义。
+ * @param ids - 会话 id（带不带 `session-` 前缀都接受）。
+ * @param dshHome - DSH 主目录。
+ * @returns 会话 id → 实体位置与占用。
+ */
+declare function locateSessionUsage(ids: readonly string[], dshHome: string): Map<string, StewardSessionUsage>;
+/**
+ * 断言目标是 `root` 的**直接子项**（层级也校验）。
+ *
+ * 破坏性操作不能只靠「路径拼对了」—— 拼错一层就是删掉整个 sessions 根。
+ * @param root - 允许的父目录。
+ * @param target - 待删目标。
+ * @param depth - 相对 root 的期望层数。
+ * @returns 是否安全。
+ */
+declare function isSafeChild(root: string, target: string, depth: number): boolean;
+/** 清理结果。 */
+interface StewardHistoryPurgeResult {
+  ok: boolean;
+  /** 成功清理的会话数。 */
+  purged?: number;
+  /** 释放的字节数（转录 + 投影缓存）。 */
+  freedBytes?: number;
+  /** 逐条失败原因；不阻断其余条目。 */
+  failures?: {
+    sessionId: string;
+    reason: string;
+  }[];
+  requiresRestart?: boolean;
+  error?: string;
+}
+/** 清理选项。 */
+interface StewardPurgeOptions {
+  /** DSH 主目录；**缺失时拒绝执行**（破坏性操作不接受猜测的路径）。 */
+  dshHome?: string;
+  /** workspace.json 候选路径覆盖（测试注入用）。 */
+  searchPaths?: readonly string[];
+}
+/**
+ * `session-history-purge`：**真删除**归档会话的磁盘实体，并连带取消其归档状态。
+ * @param payload - `{ sessionIds: string[] }`。
+ * @param log - 可选日志出口。
+ * @param options - `dshHome` 必填；`searchPaths` 可选覆盖。
+ * @returns 清理条数、释放字节数与逐条失败。
+ */
+declare function purgeHistory(payload: unknown, log?: (msg: string) => void, options?: StewardPurgeOptions): StewardHistoryPurgeResult;
 //#endregion
 //#region src/host/health/lossless.d.ts
 /**
@@ -981,8 +1091,13 @@ interface StewardRuntime {
    */
   cache?: HealthCache;
 }
-/** 支持的路由方法（按子域分组；用于对外声明与测试断言）。 */
-declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune"];
+/**
+ * 支持的路由方法（按子域分组；用于对外声明与测试断言）。
+ *
+ * `session-history-prune` 与 `session-history-purge` 是**两件事**，不可合并：
+ * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
+ */
+declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune", "session-history-purge"];
 declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair"];
 /** 依据开关判定某方法是否启用。 */
 declare function methodEnabled(method: string, config: Required<StewardConfig>): boolean;
@@ -999,4 +1114,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context): void;
 //#endregion
-export { DEFAULT_CONFIG, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, discoverSessions, findSessionLog, firstLosslessViolation, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, handleMethod, inject, isLossless, listHistory, methodEnabled, prescribe, pruneArchiveFile, pruneHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readTailFacts, scanSessions, scanZstdFrames };
+export { DEFAULT_CONFIG, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSessionLog, firstLosslessViolation, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, handleMethod, indexSessionDirs, inject, isLossless, isSafeChild, listHistory, locateSessionUsage, methodEnabled, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readTailFacts, scanSessions, scanZstdFrames, sessionsRootFor };

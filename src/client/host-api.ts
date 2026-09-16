@@ -69,6 +69,10 @@ export interface HistoryRow {
   title: string
   cwd: string
   updatedAt: number
+  /** 转录目录占用字节数（0 = 未知或磁盘上无实体）。 */
+  bytes: number
+  /** 投影缓存占用字节数。 */
+  cacheBytes: number
 }
 
 /** 历史文件列表响应。 */
@@ -77,6 +81,18 @@ export interface HistoryListResponse {
   items?: HistoryRow[]
   source?: 'registry' | 'storage-file' | 'none'
   degraded?: string
+  /** 已从存储文件移除、但宿主内存里仍生效的 id 数。 */
+  pendingRestart?: number
+  error?: string
+}
+
+/** 归档文件清理（真删除）响应。 */
+export interface HistoryPurgeResponse {
+  ok: boolean
+  purged?: number
+  freedBytes?: number
+  failures?: { sessionId: string; reason: string }[]
+  requiresRestart?: boolean
   error?: string
 }
 

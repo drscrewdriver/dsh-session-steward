@@ -1,17 +1,40 @@
 /**
  * 养老院（会话历史文件）面板 —— 自 dsh-session-search-toggle `src/client/archive-panel.tsx`
- * **迁入**并适配到本包的方法名（`session-history-list` / `session-history-prune`）。
+ * **迁入**并适配到本包的方法名。
  *
- * 行为与迁移前一致（含「显式编辑模式才允许清理」的门禁与 JS confirm）：
- * 行不可导航（归档会话已离开活跃系统）；清理写存储文件（自动备份）并需要重启 DSH。
- * 差异：列表来源改为官方归档集合真值，因此额外显示来源与降级提示。
+ * 与迁移前的关键差异（**两个操作刻意分开，不可互换**）：
+ *
+ * | 操作 | 路由 | 改什么 | 可逆 |
+ * |---|---|---|---|
+ * | 取消归档状态 | `session-history-prune` | 只改归档数组 | ✅ 重启后会话回到侧边栏 |
+ * | 清理归档文件 | `session-history-purge` | **真删**转录目录 + 投影缓存 + 两处 id | ❌ 不可逆 |
+ *
+ * 「删除」一词在本面板**不存在** —— 旧文案承诺「删除」却只改了个数组，
+ * 是导致「点了确认没反应」那类误判的一部分。
+ * 体积**按行**显示（实测单条可从 0 到 23 MB，报一个总量没有意义），按钮上给所选小计。
  */
 import { createElement, useEffect, useState, type ReactElement } from 'react'
-import { callHost, callHostAny, type HistoryRow } from './host-api.ts'
+import { callHostAny, type HistoryRow } from './host-api.ts'
 import { translate, type LocaleKey } from './locales.ts'
 
 /** 面板收到的字典面。 */
 export type PanelTranslate = (key: LocaleKey, params?: Record<string, unknown>) => string
+
+/** 当前正在跑的操作；任一进行中都锁住两个按钮。 */
+type Busy = 'unarchive' | 'purge' | null
+
+/** 人类可读体积。 */
+export function fmtSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${unit === 0 || value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
+}
 
 /** 养老院面板。 */
 export function HistoryPanel({
@@ -28,8 +51,10 @@ export function HistoryPanel({
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [pruning, setPruning] = useState(false)
+  const [busy, setBusy] = useState<Busy>(null)
   const [note, setNote] = useState<string | null>(null)
+  /** 清理失败明细（逐条）；空数组表示无失败。 */
+  const [failures, setFailures] = useState<{ sessionId: string; reason: string }[]>([])
   const [editing, setEditing] = useState(false)
 
   useEffect(() => {
@@ -79,6 +104,7 @@ export function HistoryPanel({
     setEditing(prev => !prev)
     setSelected(new Set())
     setNote(null)
+    setFailures([])
   }
 
   const toggleAll = (): void => {
@@ -87,34 +113,83 @@ export function HistoryPanel({
       : new Set((items ?? []).map(item => item.sessionId))))
   }
 
-  /** JS confirm 门禁，然后提交清理。 */
-  const pruneSelected = (): void => {
-    const ids = [...selected]
-    if (ids.length === 0) return
-    const summary = ids.length <= 5
-      ? ids.map(id => `${id.slice(0, 22)}…`).join('\n')
-      : `${ids.slice(0, 4).map(id => `${id.slice(0, 22)}…`).join('\n')}\n… 共 ${ids.length} 个`
-    const confirmed = typeof window !== 'undefined' && typeof window.confirm === 'function'
-      ? window.confirm(translate(t, 'history.confirm', { n: ids.length, summary }))
-      : false
-    if (!confirmed) return
-    setPruning(true)
+  const selectedRows = (items ?? []).filter(item => selected.has(item.sessionId))
+  const selectedBytes = selectedRows.reduce((sum, item) => sum + item.bytes + item.cacheBytes, 0)
+  const totalBytes = (items ?? []).reduce((sum, item) => sum + item.bytes + item.cacheBytes, 0)
+
+  /** 确认弹窗里的逐条摘要（清理时带体积，取消归档时不带）。 */
+  const summarise = (rows: HistoryRow[], withSize: boolean): string => {
+    const lines = rows.slice(0, 5).map((row) => {
+      const label = row.title || translate(t, 'panel.untitled')
+      const size = fmtSize(row.bytes + row.cacheBytes)
+      return withSize ? `· ${label} — ${size}` : `· ${label}`
+    })
+    if (rows.length > 5) lines.push(`… 共 ${rows.length} 个`)
+    return lines.join('\n')
+  }
+
+  const confirm = (message: string): boolean =>
+    typeof window !== 'undefined' && typeof window.confirm === 'function' ? window.confirm(message) : false
+
+  /** 提交一次操作：确认 → 调用 → 刷新列表（列表以存储文件为准，因此立刻可见变化）。 */
+  const run = (kind: Exclude<Busy, null>, method: string, confirmText: string): void => {
+    const rows = selectedRows
+    if (rows.length === 0) return
+    if (!confirm(confirmText)) return
+    setBusy(kind)
     setNote(null)
-    void callHostAny<{ removed?: number; remaining?: number }>('session-history-prune', { sessionIds: ids }, 60_000)
+    setFailures([])
+    void callHostAny<{
+      removed?: number
+      remaining?: number
+      purged?: number
+      freedBytes?: number
+      failures?: { sessionId: string; reason: string }[]
+    }>(
+      method,
+      { sessionIds: rows.map(row => row.sessionId) },
+      60_000,
+    )
       .then((res) => {
         if (res.ok === true) {
-          setNote(translate(t, 'history.restartHint', {
-            removed: res.removed ?? ids.length,
-            remaining: res.remaining ?? '?',
-          }))
+          if (kind === 'unarchive') {
+            setNote(translate(t, 'history.restartHint', {
+              removed: res.removed ?? rows.length,
+              remaining: res.remaining ?? '?',
+            }))
+          } else {
+            const freed = fmtSize(res.freedBytes ?? 0)
+            const failed = res.failures?.length ?? 0
+            setNote(failed === 0
+              ? translate(t, 'history.purgeResult', { purged: res.purged ?? rows.length, size: freed })
+              : translate(t, 'history.purgePartial', { purged: res.purged ?? rows.length, size: freed, failed }))
+            setFailures(res.failures ?? [])
+          }
           setSelected(new Set())
           setAttempt(n => n + 1)
         } else {
-          setNote(res.error ?? '清理失败')
+          setNote(res.error ?? '操作失败')
         }
       })
-      .catch((err: unknown) => setNote(`清理失败：${String(err instanceof Error ? err.message : err)}`))
-      .finally(() => setPruning(false))
+      .catch((err: unknown) => setNote(`操作失败：${String(err instanceof Error ? err.message : err)}`))
+      .finally(() => setBusy(null))
+  }
+
+  const unarchiveSelected = (): void => {
+    run('unarchive', 'session-history-prune',
+      translate(t, 'history.confirmUnarchive', {
+        n: selectedRows.length,
+        summary: summarise(selectedRows, false),
+      }))
+  }
+
+  const purgeSelected = (): void => {
+    run('purge', 'session-history-purge',
+      translate(t, 'history.confirmPurge', {
+        n: selectedRows.length,
+        summary: summarise(selectedRows, true),
+        size: fmtSize(selectedBytes),
+      }))
   }
 
   const children: ReactElement[] = []
@@ -141,13 +216,26 @@ export function HistoryPanel({
       children.push(createElement('div', { key: 'manage', className: 'dss_btnRow', style: { padding: '4px 10px 0' } }, [
         createElement('button', { key: 'all', type: 'button', className: 'dss_actBtn', onClick: toggleAll },
           allSelected ? translate(t, 'history.unselectAll') : translate(t, 'history.selectAll')),
+        // 可逆：只改归档数组。
         createElement('button', {
-          key: 'prune',
+          key: 'unarchive',
+          type: 'button',
+          className: 'dss_actBtn',
+          disabled: busy !== null || selected.size === 0,
+          onClick: unarchiveSelected,
+        }, busy === 'unarchive'
+          ? translate(t, 'history.unarchiving')
+          : translate(t, 'history.unarchive', { n: selected.size })),
+        // 不可逆：真删磁盘实体。危险样式 + 体积小计。
+        createElement('button', {
+          key: 'purge',
           type: 'button',
           className: 'dss_actBtn dss_dangerBtn',
-          disabled: pruning || selected.size === 0,
-          onClick: pruneSelected,
-        }, pruning ? translate(t, 'history.deleting') : translate(t, 'history.delete', { n: selected.size })),
+          disabled: busy !== null || selected.size === 0,
+          onClick: purgeSelected,
+        }, busy === 'purge'
+          ? translate(t, 'history.purging')
+          : translate(t, 'history.purge', { n: selected.size, size: fmtSize(selectedBytes) })),
       ]))
     }
     children.push(createElement('ul', {
@@ -167,6 +255,10 @@ export function HistoryPanel({
         createElement('span', { key: 'x', className: 'dss_titleText' }, item.title || translate(t, 'panel.untitled')),
         item.updatedAt > 0 && createElement('span', { key: 'tag', className: 'dss_tag' }, fmtTime(item.updatedAt)),
       ]),
+      createElement('span', { key: 'size', className: 'dss_meta dss_size' },
+        item.bytes + item.cacheBytes > 0
+          ? translate(t, 'history.size', { t: fmtSize(item.bytes), c: fmtSize(item.cacheBytes) })
+          : translate(t, 'history.sizeUnknown')),
       item.cwd !== '' && createElement('span', { key: 'c', className: 'dss_meta' }, item.cwd),
       createElement('span', { key: 'id', className: 'dss_meta dss_uuid' }, item.sessionId),
     ]))))
@@ -174,6 +266,13 @@ export function HistoryPanel({
 
   return createElement('div', { className: 'dss_tabBody' }, [
     note !== null && createElement('div', { key: 'note', className: 'dss_status' }, note),
+    failures.length > 0 && createElement('div', { key: 'fail', className: 'dss_status dss_error' }, [
+      createElement('div', { key: 'h' }, translate(t, 'history.purgeFailures')),
+      ...failures.slice(0, 10).map((failure, index) => createElement('div', {
+        key: `f${index}`,
+        className: 'dss_meta',
+      }, `${failure.sessionId.slice(0, 22)}… — ${failure.reason}`)),
+    ]),
     editing && createElement('div', { key: 'hint', className: 'dss_status' }, translate(t, 'history.editingHint')),
     degraded !== '' && createElement('div', { key: 'degraded', className: 'dss_status dss_warnText' }, degraded),
     pendingRestart > 0 && createElement('div', { key: 'pending', className: 'dss_status dss_warnText' },
@@ -181,7 +280,7 @@ export function HistoryPanel({
     source !== '' && createElement('div', { key: 'source', className: 'dss_metaLine' },
       translate(t, source === 'registry' ? 'history.source.registry' : source === 'storage-file' ? 'history.source.storage-file' : 'history.source.none')),
     items !== null && error === null && createElement('div', { key: 'count', className: 'dss_metaLine' },
-      translate(t, 'history.count', { n: items.length })),
+      translate(t, 'history.count', { n: items.length, size: fmtSize(totalBytes) })),
     createElement('div', { key: 'headBtns', className: 'dss_btnRow' }, [
       createElement('button', {
         key: 'edit',
@@ -212,5 +311,9 @@ export function fmtTime(ms: number): string {
   }
 }
 
-/** 供单测使用：确认面板依赖的方法名（防止与 index-* 冲突）。 */
-export const HISTORY_METHOD_NAMES = ['session-history-list', 'session-history-prune'] as const
+/** 供单测使用：面板依赖的方法名。锁住「两个操作是两条独立路由」，防止再被合并成一个动词。 */
+export const HISTORY_METHOD_NAMES = [
+  'session-history-list',
+  'session-history-prune',
+  'session-history-purge',
+] as const

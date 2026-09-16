@@ -22,6 +22,7 @@ import {
 } from './config.ts'
 import { listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
+import { purgeHistory } from './host/history/purge.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
 import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
@@ -30,8 +31,9 @@ import { countCorpus, findSessionLog, scanSessions } from './host/health/scan.ts
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
 export type { StewardConfig } from './config.ts'
-export { readArchiveSet, pruneArchiveFile } from './host/history/archive-source.ts'
+export { readArchiveSet, pruneArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
 export { listHistory, pruneHistory } from './host/history/archive.ts'
+export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor } from './host/history/purge.ts'
 export { buildSessionReport, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, readProjectionCache, readTailFacts } from './host/health/gates.ts'
 export { firstLosslessViolation, isLossless } from './host/health/lossless.ts'
 export { decodeSessionLogBytes, decodeSessionLogFile, scanZstdFrames } from './host/health/decode.ts'
@@ -214,8 +216,13 @@ export interface StewardRuntime {
   cache?: HealthCache
 }
 
-/** 支持的路由方法（按子域分组；用于对外声明与测试断言）。 */
-export const HISTORY_METHODS = ['session-history-list', 'session-history-prune'] as const
+/**
+ * 支持的路由方法（按子域分组；用于对外声明与测试断言）。
+ *
+ * `session-history-prune` 与 `session-history-purge` 是**两件事**，不可合并：
+ * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
+ */
+export const HISTORY_METHODS = ['session-history-list', 'session-history-prune', 'session-history-purge'] as const
 export const HEALTH_METHODS = [
   'session-health-status',
   'session-health-scan',
@@ -252,10 +259,16 @@ export async function handleMethod(
   }
 
   if (method === 'session-history-list') {
-    return await listHistory(runtime.registry, undefined, storagePathsFor(runtime.dshHome))
+    return await listHistory(runtime.registry, undefined, storagePathsFor(runtime.dshHome), runtime.dshHome)
   }
   if (method === 'session-history-prune') {
     return pruneHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
+  }
+  if (method === 'session-history-purge') {
+    return purgeHistory(payload, runtime.log, {
+      dshHome: runtime.dshHome,
+      searchPaths: storagePathsFor(runtime.dshHome),
+    })
   }
 
   if (method === 'session-health-status') {
