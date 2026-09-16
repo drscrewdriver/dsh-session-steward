@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add dsh-session-steward -w
 特定のバージョンを明示的にインストールする場合：
 
 ```bash
-dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.3 -w
+dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.4 -w
 ```
 
 公式 CLI は profile の依存関係、ロックファイル、`dsh.profile.bundles` を自動的に更新します。YAML の行を手動で追加しないでください。
@@ -55,7 +55,7 @@ DSH ランタイムは pnpm 11 を使用しており、その `minimumReleaseAge
 
 ```yaml
 minimumReleaseAgeExclude:
-  - dsh-session-steward@0.1.0-alpha.3
+  - dsh-session-steward@0.1.0-alpha.4
 ```
 
 ## 2. ホストの再起動

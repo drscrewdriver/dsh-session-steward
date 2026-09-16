@@ -105,7 +105,7 @@ function injectStyles(): () => void {
 .dss_spinner{width:11px;height:11px;margin-right:6px;border-radius:50%;display:inline-block;vertical-align:-1px;border:2px solid currentColor;border-top-color:transparent;animation:dssSpin .7s linear infinite}
 @keyframes dssSpin{to{transform:rotate(360deg)}}
 @keyframes dssSlide{0%{margin-left:-35%}100%{margin-left:100%}}
-@media (prefers-reduced-motion:reduce){.dss_spinner{animation:none}.dss_progressIndeterminate{animation:none;width:100%;opacity:.5}}
+@media (prefers-reduced-motion:reduce){.dss_spinner{animation:none}.dss_progressIndeterminate{animation:none;width:100%;opacity:.5}.dss_setChev{transition:none}.dss_setCard{transition:none}}
 .dss_verdict{font-size:12px;line-height:18px;border-radius:8px;padding:6px 10px;margin-top:6px;border:1px solid transparent}
 .dss_verdict_repaired{background:rgba(22,163,74,.10);color:#15803d;border-color:rgba(22,163,74,.28)}
 .dss_verdict_repaired-with-residual{background:rgba(217,119,6,.10);color:#b45309;border-color:rgba(217,119,6,.28)}
@@ -117,7 +117,14 @@ function injectStyles(): () => void {
 .dss_cmdBlock{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;padding:6px 8px}
 .dss_cmdLine{display:flex;gap:6px;align-items:center}
 .dss_cmd{flex:1 1 auto;font-family:var(--ds-font-family-code,monospace);font-size:11px;white-space:pre-wrap;word-break:break-all}
-.dss_setBody{display:flex;flex-direction:column;gap:2px}
+.dss_setCard{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-3,rgba(127,127,127,.05));border-radius:12px;transition:border-color .16s,background .16s}
+.dss_setHead{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:none;border:0;border-radius:12px;display:flex;align-items:center;gap:12px;padding:14px 16px}
+.dss_setHeadText{display:flex;flex-direction:column;gap:2px;flex:1 1 0%;min-width:0}
+.dss_setCardTitle{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#111827)}
+.dss_setCardDesc{font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#9ca3af)}
+.dss_setChev{color:var(--dsw-alias-label-tertiary,#9ca3af);flex:0 0 auto;transition:transform .16s}
+.dss_setCardOpen .dss_setChev{transform:rotate(180deg)}
+.dss_setBody{display:flex;flex-direction:column;gap:2px;padding:0 16px 12px}
 .dss_setRow{display:flex;align-items:center;gap:10px;padding:6px 0}
 .dss_setText{display:flex;flex-direction:column;flex:1 1 auto;min-width:0}
 .dss_setTitle{font-size:13px;color:var(--dsw-alias-label-primary,#111827)}
