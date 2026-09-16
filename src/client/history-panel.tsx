@@ -24,6 +24,7 @@ export function HistoryPanel({
   const [items, setItems] = useState<HistoryRow[] | null>(null)
   const [source, setSource] = useState<string>('')
   const [degraded, setDegraded] = useState<string>('')
+  const [pendingRestart, setPendingRestart] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
@@ -34,7 +35,13 @@ export function HistoryPanel({
   useEffect(() => {
     let cancelled = false
     setError(null)
-    callHostAny<{ items?: HistoryRow[]; source?: string; degraded?: string; error?: string }>(
+    callHostAny<{
+      items?: HistoryRow[]
+      source?: string
+      degraded?: string
+      pendingRestart?: number
+      error?: string
+    }>(
       'session-history-list',
       {},
     ).then((res) => {
@@ -43,6 +50,7 @@ export function HistoryPanel({
         setItems(res.items)
         setSource(typeof res.source === 'string' ? res.source : '')
         setDegraded(typeof res.degraded === 'string' ? res.degraded : '')
+        setPendingRestart(typeof res.pendingRestart === 'number' ? res.pendingRestart : 0)
       } else {
         setError(res.error ?? '读取归档列表失败')
       }
@@ -168,8 +176,12 @@ export function HistoryPanel({
     note !== null && createElement('div', { key: 'note', className: 'dss_status' }, note),
     editing && createElement('div', { key: 'hint', className: 'dss_status' }, translate(t, 'history.editingHint')),
     degraded !== '' && createElement('div', { key: 'degraded', className: 'dss_status dss_warnText' }, degraded),
+    pendingRestart > 0 && createElement('div', { key: 'pending', className: 'dss_status dss_warnText' },
+      translate(t, 'history.pendingRestart', { n: pendingRestart })),
     source !== '' && createElement('div', { key: 'source', className: 'dss_metaLine' },
       translate(t, source === 'registry' ? 'history.source.registry' : source === 'storage-file' ? 'history.source.storage-file' : 'history.source.none')),
+    items !== null && error === null && createElement('div', { key: 'count', className: 'dss_metaLine' },
+      translate(t, 'history.count', { n: items.length })),
     createElement('div', { key: 'headBtns', className: 'dss_btnRow' }, [
       createElement('button', {
         key: 'edit',

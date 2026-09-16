@@ -486,6 +486,13 @@ declare const STEWARD_API_PREFIX = "/session-steward/api";
 interface StewardArchiveRead {
   ids: readonly string[];
   source: 'registry' | 'storage-file' | 'none';
+  /**
+   * 宿主内存 registry 里的同一集合（尽力而为，读不到时缺省）。
+   *
+   * 与 `ids` 的差集 = 「已从存储文件移除、但本进程仍生效」的悬挂项：
+   * registry 是宿主启动时载入的快照，prune 写不到它，重启才会重载。
+   */
+  registryIds?: readonly string[];
 }
 /** workspaceRegistry 镜像面（只读 getter）。 */
 interface StewardRegistryFace {
@@ -493,9 +500,14 @@ interface StewardRegistryFace {
 }
 /**
  * 解析一次官方归档集合。
+ *
+ * **存储文件优先**：prune 唯一能改的就是这份文件，列表必须与「能被改的那份」
+ * 同源，否则清理成功后面板看起来毫无变化 —— 宿主 registry 是进程启动时的快照，
+ * 直接编辑文件不会回写它，于是「文件在瘦身、列表纹丝不动」。
+ * registry 退居为文件缺失时的兜底，同时作为诊断面（`registryIds`）返回。
  * @param registry - 惰性 workspaceRegistry 面（可能缺失或抛错）。
  * @param searchPaths - 可选候选路径覆盖（DSH_HOME 非默认值或测试注入时使用）。
- * @returns 归档 ids 以及服务它的来源。
+ * @returns 归档 ids、服务它的来源，以及宿主内存里的同一集合。
  */
 declare function readArchiveSet(registry?: StewardRegistryFace, searchPaths?: readonly string[]): StewardArchiveRead;
 /**
@@ -728,6 +740,13 @@ interface StewardHistoryListResult {
   source?: 'registry' | 'storage-file' | 'none';
   /** 元数据降级原因（标题/cwd 缺失时给出）。 */
   degraded?: string;
+  /**
+   * 已从存储文件移除、但宿主内存 registry 里仍生效的 id 数。
+   *
+   * 大于 0 时列表展示的是**存储文件真值**（已不含这些 id），但它们在本进程内
+   * 仍然隐藏着对应会话 —— 面板据此提示「需重启 DSH 才彻底消失」。
+   */
+  pendingRestart?: number;
   error?: string;
 }
 /** 标题快照读取面（结构化镜像，零 value import）。 */

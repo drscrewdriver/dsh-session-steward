@@ -77,11 +77,36 @@ describe('session-history-list：归档集合真值 + 元数据降级标注', ()
     expect(result.degraded).toBeTruthy()
   })
 
-  it('registry 优先于存储文件', async () => {
+  it('存储文件优先于 registry（否则清理成功后面板不会刷新）', async () => {
     const { file } = tempStore(['s-file'])
-    const result = await listHistory(() => ({ archivedSessionIds: ['s-registry'] }), undefined, [file])
-    expect(result.source).toBe('registry')
-    expect(result.items?.map((row) => row.sessionId)).toEqual(['s-registry'])
+    const result = await listHistory(() => ({ archivedSessionIds: ['s-file', 's-pruned'] }), undefined, [file])
+    expect(result.source).toBe('storage-file')
+    expect(result.items?.map((row) => row.sessionId)).toEqual(['s-file'])
+    // registry 里多出来的那条 = 已出文件、仍在宿主内存生效 → 必须如实标注待重启
+    expect(result.pendingRestart).toBe(1)
+  })
+
+  it('回归：prune 后 list 立刻少一条（读的人与写的人同源）', async () => {
+    const { file } = tempStore(['s-a', 's-b'])
+    // 宿主内存仍是启动时的快照：两条都在
+    const registry = () => ({ archivedSessionIds: ['s-a', 's-b'] })
+    const before = await listHistory(registry, undefined, [file])
+    expect(before.items?.map((row) => row.sessionId)).toEqual(['s-a', 's-b'])
+    expect(before.pendingRestart).toBeUndefined()
+
+    expect(pruneHistory({ sessionIds: ['s-b'] }, undefined, [file]).ok).toBe(true)
+
+    const after = await listHistory(registry, undefined, [file])
+    expect(after.items?.map((row) => row.sessionId)).toEqual(['s-a'])
+    expect(after.pendingRestart).toBe(1)
+  })
+
+  it('prune 写后校验：读不回存储文件时如实报错，而不是假报成功', () => {
+    const missing = join(tmpdir(), 'steward-history-missing', 'workspace.json')
+    expect(existsSync(missing)).toBe(false)
+    const result = pruneHistory({ sessionIds: ['s-a'] }, undefined, [missing])
+    expect(result.ok).toBe(false)
+    expect(result.error).toBeTruthy()
   })
 
   it('两处都不可用时显式失败，不返回空列表冒充成功', async () => {
