@@ -44,6 +44,8 @@ export const inject = ['slots']
 
 /** 侧边栏脚部入口的 props（结构子集）。 */
 export interface StewardFooterProps {
+  /** 侧边栏是否渲染宽栏内容（false = 56px 收起轨道）。 */
+  wide?: boolean
   onClick?: () => void
   title?: string
 }
@@ -56,10 +58,13 @@ function injectStyles(): () => void {
   const style = document.createElement('style')
   style.id = id
   style.textContent = `
-.dss_entryWrap{display:inline-flex;align-items:center}
-.dss_footerEntry{width:28px;height:28px;border:none;background:transparent;cursor:pointer;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary)}
+.dss_entryWrap{flex:none;display:inline-flex;align-items:center;min-width:0}
+.dss_entryWrapWide{margin-left:8px}
+.dss_footerEntry{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:42px;padding:0 12px 0 10px;border:none;border-radius:12px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;line-height:22px;white-space:nowrap;overflow:hidden;transition:background-color 160ms ease-out,color 160ms ease-out}
 .dss_footerEntry:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.dss_footerIcon{font-size:15px;line-height:1}
+.dss_footerEntryRail{width:36px;height:36px;padding:0;gap:0;border-radius:50%}
+.dss_footerIcon{flex:none;font-size:15px;line-height:1}
+.dss_footerLabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dss_backdrop{position:fixed;inset:0;background:rgba(15,20,30,.42);z-index:1000}
 .dss_panel{position:fixed;z-index:1001;left:50%;top:8vh;transform:translateX(-50%);width:min(760px,92vw);max-height:78vh;overflow:auto;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.18);padding:10px 14px 14px}
 .dss_dialogHead{display:flex;align-items:center;gap:10px;min-height:34px}
@@ -201,12 +206,17 @@ export function StewardEntry(
   const historyFiles = config.historyFiles !== false
   const healthCheck = config.healthCheck !== false
   const visible = config.enabled !== false && (historyFiles || healthCheck)
+  const wide = props.wide === true
+  // 入口文案与面板标题同源：字典是唯一出处，组件不再持有兜底中文。
+  const label = translate(undefined, 'panel.title')
 
   if (!visible) return createElement('span', { className: 'dss_entryWrap' })
-  return createElement('span', { className: 'dss_entryWrap' }, [
+  return createElement('span', { className: wide ? 'dss_entryWrap dss_entryWrapWide' : 'dss_entryWrap' }, [
     createElement(StewardFooter, {
       key: 'btn',
-      title: translate(undefined, 'panel.title'),
+      title: label,
+      label,
+      wide,
       onClick: () => { setOpen(!open) },
     }),
     open

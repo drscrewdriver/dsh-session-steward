@@ -94,13 +94,25 @@ export function StewardPanel({ t, historyFiles, healthCheck, onClose }: StewardP
   ]), document.body)
 }
 
-/** 侧边栏脚部入口（照抄 toggle 的 footer 组件形态）。 */
-export function StewardFooter(props: { onClick?: () => void; title?: string }): ReactElement {
+/** 侧边栏脚部入口：宽栏带文案成行控件，收起轨道退化为 36x36 图标钮。 */
+export function StewardFooter(props: {
+  onClick?: () => void
+  title?: string
+  label?: string
+  wide?: boolean
+}): ReactElement {
+  const wide = props.wide === true
   return createElement('button', {
     type: 'button',
-    className: 'dss_footerEntry',
-    title: props.title ?? '会话管家',
-    'aria-label': props.title ?? '会话管家',
+    className: wide ? 'dss_footerEntry' : 'dss_footerEntry dss_footerEntryRail',
+    title: props.title,
+    'aria-label': props.title,
     onClick: props.onClick,
-  }, createElement('span', { className: 'dss_footerIcon', 'aria-hidden': true }, '🧭'))
+  }, [
+    createElement('span', { key: 'icon', className: 'dss_footerIcon', 'aria-hidden': true }, '🧭'),
+    // 收起轨道里 36px 装不下文案，标签与宽栏同条件出现，与搜索入口一致。
+    wide && props.label !== undefined
+      ? createElement('span', { key: 'label', className: 'dss_footerLabel' }, props.label)
+      : null,
+  ])
 }

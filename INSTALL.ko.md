@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add dsh-session-steward -w
 특정 버전을 명시적으로 설치:
 
 ```bash
-dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.4 -w
+dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.5 -w
 ```
 
 공식 CLI는 프로필 의존성, 잠금 파일, `dsh.profile.bundles`를 자동으로 갱신합니다. YAML 행을 수동으로 추가하지 마세요.
@@ -55,7 +55,7 @@ DSH 런타임은 pnpm 11을 사용하며, 그 `minimumReleaseAge` 정책이 갓 
 
 ```yaml
 minimumReleaseAgeExclude:
-  - dsh-session-steward@0.1.0-alpha.4
+  - dsh-session-steward@0.1.0-alpha.5
 ```
 
 ## 2. 호스트 재시작
