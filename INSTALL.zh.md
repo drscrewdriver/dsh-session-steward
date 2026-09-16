@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add dsh-session-steward -w
 显式安装指定版本：
 
 ```bash
-dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.0 -w
+dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.1 -w
 ```
 
 官方 CLI 会自动更新 profile 依赖、锁文件与 `dsh.profile.bundles`。不要手工添加 YAML 行。
@@ -55,7 +55,7 @@ DSH 运行时使用 pnpm 11，其 `minimumReleaseAge` 策略可能拦截刚发�
 
 ```yaml
 minimumReleaseAgeExclude:
-  - dsh-session-steward@0.1.0-alpha.0
+  - dsh-session-steward@0.1.0-alpha.1
 ```
 
 ## 2. 重启宿主
@@ -128,8 +128,8 @@ dsh --profile <profile> --dump-default-config
 
 重启后，侧边栏入口 `dsh-session-steward` 可用，设置区使用 `session-steward` 命名空间。请确认：
 
-1. 两个开关均开启时，**病案室**与**体检**两个页签都会渲染。
-2. 关闭 `historyFiles` 后「病案室」页签消失，且所有 `session-history-*` 调用返回显式的 disabled 错误。
+1. 两个开关均开启时，**养老院**与**体检**两个页签都会渲染。
+2. 关闭 `historyFiles` 后「养老院」页签消失，且所有 `session-history-*` 调用返回显式的 disabled 错误。
 3. 关闭 `healthCheck` 后「体检」页签消失，且所有 `session-health-*` 调用返回显式的 disabled 错误。
 4. 对 `/session-steward/api` 调用未识别的方法时返回显式错误，而不是静默成功。
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "DSH Web 插件：会话管家 —— 会话历史文件（归档浏览与清理）与会话健康检查（体检 → 处方 → 出院），不碰会话日志、只做可逆处置",
   "keywords": [
     "deepseek-harness",

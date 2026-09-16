@@ -2,7 +2,7 @@
 
 DSH Web 插件：**会话历史文件 + 会话健康检查**。它只做两件事，且都不碰会话数据本身：
 
-- **病案室（会话历史文件）**：浏览官方归档集合、批量清理（备份 + 原子替换，需重启宿主生效）。
+- **养老院（会话历史文件）**：浏览官方归档集合、批量清理（备份 + 原子替换，需重启宿主生效）。
 - **体检（健康检查 / 会话医生）**：四门体检 → 处方（命令清单）→ 出院（可逆处置 + before/after 对照）。
 
 > 命名边界：**本插件不提供搜索与索引**。搜索/独立索引属于另一片（`dsh-search-index`），
@@ -38,7 +38,7 @@ dsh plugin --profile web add "link:E:/test/rewrite-agently/mine-dsh-plugins/dsh-
 
 | 开关 | 字段 | 关闭效果 |
 |---|---|---|
-| 会话历史文件 | `historyFiles`（默认 true） | 不注册 `session-history-*`，不渲染「病案室」页签 |
+| 会话历史文件 | `historyFiles`（默认 true） | 不注册 `session-history-*`，不渲染「养老院」页签 |
 | 健康检查 | `healthCheck`（默认 true） | 不注册 `session-health-*`，不渲染「体检」页签 |
 
 关闭时对应方法返回 `{ ok: false, error: '子域已关闭（…=false）：<method> 未注册' }`，**不留空壳**。

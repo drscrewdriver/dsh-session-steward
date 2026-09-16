@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add dsh-session-steward -w
 Install a specific version explicitly:
 
 ```bash
-dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.0 -w
+dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.1 -w
 ```
 
 The official CLI updates the profile dependency, the lockfile, and `dsh.profile.bundles` automatically. Do not add a manual YAML row.
@@ -55,7 +55,7 @@ The DSH runtime uses pnpm 11, whose `minimumReleaseAge` policy may block a fresh
 
 ```yaml
 minimumReleaseAgeExclude:
-  - dsh-session-steward@0.1.0-alpha.0
+  - dsh-session-steward@0.1.0-alpha.1
 ```
 
 ## 2. Restart the host
@@ -128,8 +128,8 @@ It must contain:
 
 After the restart, the sidebar entry `dsh-session-steward` is available and the settings section uses the `session-steward` namespace. Confirm:
 
-1. Both tabs render — **Records Room** and **Checkup** — while both feature gates are on.
-2. Turning `historyFiles` off removes the Records Room tab and makes every `session-history-*` call return an explicit disabled error.
+1. Both tabs render — **Retirement Home** and **Checkup** — while both feature gates are on.
+2. Turning `historyFiles` off removes the Retirement Home tab and makes every `session-history-*` call return an explicit disabled error.
 3. Turning `healthCheck` off removes the Checkup tab and makes every `session-health-*` call return an explicit disabled error.
 4. An unrecognized method on `/session-steward/api` returns an explicit error rather than succeeding silently.
 

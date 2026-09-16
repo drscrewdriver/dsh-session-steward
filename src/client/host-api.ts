@@ -83,7 +83,7 @@ export interface HistoryListResponse {
 /** 一个 gate 的结果（与 host 侧 GateResult 对齐）。 */
 export interface HealthGate {
   id: 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
-  level: 'ok' | 'warn' | 'fail'
+  level: 'ok' | 'warn' | 'fail' | 'skipped'
   evidence: string
   attribution?: { projection?: string; package?: string; field?: string }
   detail?: Record<string, unknown>
@@ -92,6 +92,7 @@ export interface HealthGate {
 /** 单会话体检报告。 */
 export interface HealthReport {
   sessionId: string
+  /** 总判：聚合时 `skipped` 不抬升（见 host 侧 buildSessionReport）。 */
   level: 'ok' | 'warn' | 'fail'
   gates: HealthGate[]
   generatedAt: number
@@ -100,7 +101,12 @@ export interface HealthReport {
 /** 体检扫描响应。 */
 export interface HealthScanResponse {
   ok: boolean
+  /** 本批已访问的会话数（分批扫描的进度步长）。 */
   scanned?: number
+  /** 语料总数（进度分母）。 */
+  total?: number
+  /** 本批起点（原样回显）。 */
+  offset?: number
   findings?: HealthReport[]
   error?: string
 }

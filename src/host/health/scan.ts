@@ -68,31 +68,60 @@ export function findSessionLog(sessionId: string, dshHome?: string): string | un
 /** 扫描结果。 */
 export interface HealthScanResult {
   ok: boolean
+  /** 本批实际体检的会话数（已访问数，不受 onlyProblems 过滤影响）。 */
   scanned: number
+  /**
+   * 语料总数（进度分母）。分批调用时每批都拿到同一个值，客户端据此算
+   * `已访问 = offset + scanned` / `total`，宿主无需持有跨请求状态。
+   */
+  total: number
+  /** 本批在语料中的起点（原样回显，便于客户端对账）。 */
+  offset: number
   findings: SessionHealthReport[]
   /** 仅保留非 ok 的报告时使用。 */
   filtered?: boolean
   error?: string
 }
 
+/** 语料枚举上限（进度分母的来源；与 route 侧 MAX_SCAN_LIMIT 同量级）。 */
+const DISCOVERY_LIMIT = 200
+
+/** 未显式传 limit 时的单批会话数。 */
+const DEFAULT_BATCH_LIMIT = 50
+
 /**
- * 批量体检。
- * @param options - dshHome / 扫描上限 / 是否只返回非 ok / 归属查询 / 热态状态提供者。
+ * 批量体检（支持分批）。
+ *
+ * 语料先整体列出（按 mtime 倒序，≤ DISCOVERY_LIMIT），再按 `[offset, offset+limit)`
+ * 切片扫描。这样客户端可以用小批次连续调用、自己累计真实进度，而宿主保持无状态
+ * ——不必把同步循环改成异步，也不必新增进度轮询端点。
+ * @param options - dshHome / 批大小 / 批起点 / 是否只返回非 ok / 归属查询 / 热态状态提供者。
  */
 export function scanSessions(options: {
   dshHome?: string
   limit?: number
+  offset?: number
   onlyProblems?: boolean
   attribute?: GateContext['attribute']
   projectionStateFor?: (sessionId: string) => Record<string, unknown> | undefined
   now?: () => number
 }): HealthScanResult {
-  const discovered = discoverSessions(options.dshHome, options.limit ?? 50)
+  const discovered = discoverSessions(options.dshHome, DISCOVERY_LIMIT)
   if (discovered.length === 0) {
-    return { ok: false, scanned: 0, findings: [], error: '未发现任何会话日志（检查 DSH home 与 sessions 目录）' }
+    return {
+      ok: false,
+      scanned: 0,
+      total: 0,
+      offset: 0,
+      findings: [],
+      error: '未发现任何会话日志（检查 DSH home 与 sessions 目录）',
+    }
   }
+  const offset = Math.max(0, Math.floor(options.offset ?? 0))
+  const limit = Math.max(1, Math.floor(options.limit ?? DEFAULT_BATCH_LIMIT))
+  const batch = discovered.slice(offset, offset + limit)
   const findings: SessionHealthReport[] = []
-  for (const session of discovered) {
+  for (const session of batch) {
     const projectionState = options.projectionStateFor?.(session.sessionId)
     const report = buildSessionReport({
       sessionId: session.sessionId,
@@ -107,7 +136,9 @@ export function scanSessions(options: {
   }
   return {
     ok: true,
-    scanned: discovered.length,
+    scanned: batch.length,
+    total: discovered.length,
+    offset,
     findings,
     ...(options.onlyProblems === true ? { filtered: true } : {}),
   }

@@ -59,10 +59,12 @@ describe('gate 2：投影缓存水位与结算形态', () => {
   beforeAll(() => { home = mkdtempSync(join(tmpdir(), 'steward-cache-')) })
   afterAll(() => { rmSync(home, { recursive: true, force: true }) })
 
-  it('记录缺失 → warn（提示可能被拒写）', () => {
+  it('记录缺失 → skipped（无从判定，不是「注意」）', () => {
+    // 曾经断言 warn：所有尚无缓存的会话都会恒为「注意」（宿主会在下次检查点重建，
+    // 短时缺失属正常）。无从观测 ⇒ skipped，不是 warn。
     const facts = readProjectionCache('session-missing', 10, home)
     expect(facts.present).toBe(false)
-    expect(gateProjectionCache(facts).level).toBe('warn')
+    expect(gateProjectionCache(facts).level).toBe('skipped')
   })
 
   it('水位对齐且无未结算字段 → ok', () => {
@@ -127,10 +129,16 @@ describe('gate 3：无损 JSON（核心）', () => {
     expect(gate.attribution?.package).toBe('unknown')
   })
 
-  it('拿不到热态状态 → warn（冷态无法判定无损性）', () => {
+  it('拿不到热态状态 → skipped（冷态无从判定，不是「注意」）', () => {
+    // 曾经断言 warn：冷态会话没有热态投影可查，「无法判定」被记成「注意」后
+    // 全部未加载会话恒为 warn，信号淹没在噪声里（实测事故）。中性档才是如实表达。
     const gate = gateLosslessJson(undefined)
-    expect(gate.level).toBe('warn')
+    expect(gate.level).toBe('skipped')
     expect(gate.evidence).toContain('冷态')
+  })
+
+  it('热态投影为空 → skipped（无可判定行，同样不是「注意」）', () => {
+    expect(gateLosslessJson({}).level).toBe('skipped')
   })
 })
 
@@ -159,18 +167,30 @@ describe('gate 4：可接续性', () => {
     expect(gate.evidence).toContain('interrupted')
   })
 
-  it('没有 turn/end → warn', () => {
+  it('没有 turn/end → skipped（无从确认，不是「注意」）', () => {
+    // 空会话（尚未完成首轮）无害，截断日志由 gate 1 负责；本门区分不了 ⇒ skipped。
     const events = healthyLog().events.filter(event => event.type !== 'turn/end')
-    expect(gateColdRead(readTailFacts({ ...healthyLog(), events })).level).toBe('warn')
+    expect(gateColdRead(readTailFacts({ ...healthyLog(), events })).level).toBe('skipped')
   })
 })
 
 describe('报告聚合', () => {
-  it('任一 fail 即 fail；否则有 warn 即 warn', () => {
+  it('冷态会话 → ok：skipped 不抬升总判（回归：曾全量误报「注意」）', () => {
+    // 未加载的会话既无热态投影、也无投影缓存记录 → 两门 skipped。
+    // 修复前这两门记 warn，导致**所有**未加载会话恒为「注意」，信号淹没。
     const report = buildSessionReport({ sessionId: 's1', log: healthyLog(), now: () => 42 })
     expect(report.gates).toHaveLength(4)
-    expect(report.level).toBe('warn') // 无热态投影状态 → lossless gate 为 warn
+    expect(report.gates.filter(gate => gate.level === 'skipped').length).toBeGreaterThan(0)
+    expect(report.gates.some(gate => gate.level === 'warn')).toBe(false)
+    expect(report.level).toBe('ok')
     expect(report.generatedAt).toBe(42)
+  })
+
+  it('有观测依据的异常仍抬升为 warn（撕裂帧）', () => {
+    const torn: SessionLogRead = { ...healthyLog(), tornStart: 4096, recoveredFromTorn: 128 }
+    const report = buildSessionReport({ sessionId: 's-torn', log: torn })
+    expect(report.gates.find(gate => gate.id === 'log-integrity')?.level).toBe('warn')
+    expect(report.level).toBe('warn')
   })
 
   it('缺日志路径且缺解码结果 → fail', () => {

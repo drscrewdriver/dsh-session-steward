@@ -28,8 +28,18 @@ const GATE_LABEL: Record<HealthGate['id'], LocaleKey> = {
 const LEVEL_LABEL = {
   ok: 'health.level.ok',
   warn: 'health.level.warn',
+  skipped: 'health.level.skipped',
   fail: 'health.level.fail',
 } as const
+
+/**
+ * 单批扫描的会话数。
+ *
+ * 宿主侧 `scanSessions` 是同步循环，一次批太大就长时间占住事件循环、界面全无反馈。
+ * 小批次连续调用把控制权交回客户端：每批之间有真实的进度与计时，且宿主无需持有
+ * 跨请求状态（见 host/health/scan.ts 的 offset 语义）。
+ */
+const SCAN_BATCH = 5
 
 /** 体检面板。 */
 export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () => void }): ReactElement {
@@ -40,6 +50,10 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
   const [repairing, setRepairing] = useState(false)
   const [discharge, setDischarge] = useState<HealthRepairResponse | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
+  /** 分批扫描进度：done = 已访问会话数，total = 语料总数（0 表示尚未拿到分母）。 */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [startedAt, setStartedAt] = useState(0)
+  const [elapsedMs, setElapsedMs] = useState(0)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose() }
@@ -47,18 +61,51 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     return () => { document.removeEventListener('keydown', onKey) }
   }, [onClose])
 
+  // 计时器只在扫描期间跑：给「不知道是否还在运行」一个可动的读数。
+  useEffect(() => {
+    if (!scanning || startedAt === 0) return
+    const timer = setInterval(() => { setElapsedMs(Date.now() - startedAt) }, 100)
+    return () => { clearInterval(timer) }
+  }, [scanning, startedAt])
+
   const runScan = (): void => {
     setScanning(true)
     setError(null)
     setDetail(null)
     setDischarge(null)
-    void callHostAny<HealthScanResponse>('session-health-scan', { limit: 30, onlyProblems: true }, 120_000)
-      .then((res) => {
-        if (res.ok === true) setFindings(res.findings ?? [])
-        else setError(res.error ?? '体检失败')
-      })
-      .catch((err: unknown) => setError(String(err instanceof Error ? err.message : err)))
-      .finally(() => setScanning(false))
+    setFindings(null)
+    setProgress({ done: 0, total: 0 })
+    setStartedAt(Date.now())
+    setElapsedMs(0)
+    void (async () => {
+      const collected: HealthReport[] = []
+      let offset = 0
+      try {
+        for (;;) {
+          const res = await callHostAny<HealthScanResponse>(
+            'session-health-scan',
+            { limit: SCAN_BATCH, offset, onlyProblems: true },
+            120_000,
+          )
+          if (res.ok !== true) {
+            setError(res.error ?? '体检失败')
+            return
+          }
+          const total = res.total ?? 0
+          const scanned = res.scanned ?? 0
+          collected.push(...(res.findings ?? []))
+          offset += scanned
+          setProgress({ done: offset, total })
+          // scanned 为 0 = 本批没有可扫的会话；offset >= total = 语料已走完。
+          if (scanned === 0 || offset >= total) break
+        }
+        setFindings(collected)
+      } catch (err: unknown) {
+        setError(String(err instanceof Error ? err.message : err))
+      } finally {
+        setScanning(false)
+      }
+    })()
   }
 
   const openDetail = (sessionId: string): void => {
@@ -109,6 +156,28 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     }, scanning ? translate(t, 'health.scanning') : translate(t, 'health.scan')),
   ]))
 
+  // 分批扫描进度：进度条 + `已访问/总数 · 已用 Xs`。
+  // total 尚未拿到（首批未返回）时走不确定态动画——仍能证明程序在跑，
+  // 这正是「不知道是否正常运行」要解决的问题。
+  if (scanning && progress !== null) {
+    const total = progress.total
+    const pct = total > 0 ? Math.min(100, Math.round((progress.done / total) * 100)) : 0
+    lines.push(createElement('div', { key: 'progress', className: 'dss_progressRow' }, [
+      createElement('div', { key: 'track', className: 'dss_progressTrack' },
+        createElement('div', {
+          key: 'fill',
+          className: total > 0 ? 'dss_progressFill' : 'dss_progressFill dss_progressIndeterminate',
+          ...(total > 0 ? { style: { width: `${pct}%` } } : {}),
+        })),
+      createElement('span', { key: 'read', className: 'dss_meta' },
+        translate(t, 'health.progress', {
+          done: progress.done,
+          total: total > 0 ? total : '?',
+          sec: (elapsedMs / 1000).toFixed(1),
+        })),
+    ]))
+  }
+
   if (error !== null) lines.push(createElement('div', { key: 'err', className: 'dss_error' }, error))
   if (detail !== null || discharge !== null) {
     lines.push(createElement('div', { key: 'back', className: 'dss_btnRow' }, [
@@ -135,18 +204,26 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     if (findings.length === 0) {
       lines.push(createElement('div', { key: 'clean', className: 'dss_empty' }, translate(t, 'health.empty')))
     } else {
-      lines.push(createElement('ul', { key: 'list', className: 'dss_list', role: 'list' }, findings.map(item =>
-        createElement('li', { key: item.sessionId, className: 'dss_row' }, [
+      lines.push(createElement('ul', { key: 'list', className: 'dss_list', role: 'list' }, findings.map((item) => {
+        // 行内列出「哪一门·什么档位」。只有总判徽标时，30 行「注意」彼此不可区分，
+        // 用户必须逐条点开才发现原因（实测体验问题）；门摘要让信号可扫读。
+        // `skipped` 一并列出：它是「未检查」而非异常，不应与 warn 混为一谈。
+        const reasons = item.gates
+          .filter(gate => gate.level !== 'ok')
+          .map(gate => `${translate(t, GATE_LABEL[gate.id])}·${translate(t, LEVEL_LABEL[gate.level])}`)
+          .join(' · ')
+        return createElement('li', { key: item.sessionId, className: 'dss_row' }, [
           createElement('span', { key: 'lv', className: `dss_levelPill dss_level_${item.level}` }, translate(t, LEVEL_LABEL[item.level])),
           createElement('span', { key: 'id', className: 'dss_meta dss_uuid' }, item.sessionId),
+          reasons !== '' && createElement('span', { key: 'why', className: 'dss_why' }, reasons),
           createElement('button', {
             key: 'd',
             type: 'button',
             className: 'dss_actBtn',
             onClick: () => { openDetail(item.sessionId) },
           }, translate(t, 'health.detail')),
-        ]),
-      )))
+        ])
+      })))
     }
   }
 
@@ -159,7 +236,12 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
         className: 'dss_actBtn',
         disabled: repairing || report.level === 'ok',
         onClick: () => { runRepair(report.sessionId) },
-      }, repairing ? translate(t, 'health.repairing') : translate(t, 'health.repair')),
+      }, [
+        // 处置只涉及单会话（2 次报告 + 1 次文件操作），耗时不足以支撑进度条；
+        // 但必须有**可动的**忙碌反馈，否则点击后界面静止，用户不知道是否在跑。
+        repairing ? createElement('span', { key: 'sp', className: 'dss_spinner', 'aria-hidden': 'true' }) : null,
+        createElement('span', { key: 'tx' }, repairing ? translate(t, 'health.repairing') : translate(t, 'health.repair')),
+      ]),
     ]))
     const prescriptions = detail?.prescriptions ?? discharge?.prescriptions ?? []
     if (prescriptions.length > 0) {

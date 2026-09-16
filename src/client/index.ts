@@ -1,7 +1,7 @@
 /**
  * 会话管家客户端半身：样式、字典、侧边栏入口（dsh-session-steward）与设置卡。
  *
- * 侧边栏入口点击后打开「病案室 / 体检」双页签对话框；两个页签的可见性由配置开关决定，
+ * 侧边栏入口点击后打开「养老院 / 体检」双页签对话框；两个页签的可见性由配置开关决定，
  * 关掉的子域不渲染页签，也不留空壳。开关读取走 settingsScope 的订阅快照，
  * 写通道只有设置卡（显式控件）。
  */
@@ -95,6 +95,16 @@ function injectStyles(): () => void {
 .dss_level_ok{background:rgba(22,163,74,.12);color:#15803d}
 .dss_level_warn{background:rgba(217,119,6,.14);color:#b45309}
 .dss_level_fail{background:rgba(220,38,38,.14);color:#b91c1c}
+.dss_level_skipped{background:rgba(107,114,128,.14);color:#4b5563}
+.dss_progressRow{display:flex;align-items:center;gap:8px;margin-top:2px}
+.dss_progressTrack{flex:1;height:6px;border-radius:999px;background:var(--dsw-alias-bg-layer-1,#eef0f3);overflow:hidden}
+.dss_progressFill{height:100%;border-radius:999px;background:var(--dsw-alias-state-business-primary,#3d5be0);transition:width .2s ease}
+.dss_progressIndeterminate{width:35%;animation:dssSlide 1.1s ease-in-out infinite}
+.dss_why{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);flex:1;min-width:0}
+.dss_spinner{width:11px;height:11px;margin-right:6px;border-radius:50%;display:inline-block;vertical-align:-1px;border:2px solid currentColor;border-top-color:transparent;animation:dssSpin .7s linear infinite}
+@keyframes dssSpin{to{transform:rotate(360deg)}}
+@keyframes dssSlide{0%{margin-left:-35%}100%{margin-left:100%}}
+@media (prefers-reduced-motion:reduce){.dss_spinner{animation:none}.dss_progressIndeterminate{animation:none;width:100%;opacity:.5}}
 .dss_phaseRow{display:flex;gap:8px;align-items:center}
 .dss_phase{font-weight:600;font-size:12px}
 .dss_cmdBlock{display:flex;flex-direction:column;gap:4px;border:1px dashed var(--dsw-alias-border-l2,#e5e7eb);border-radius:10px;padding:6px 8px}
@@ -134,7 +144,7 @@ export function apply(ctx: Context): void {
   const slots = ctx.get('slots') as StewardSlotsService | undefined
   if (slots === undefined) return
 
-  // 侧边栏入口：一个按钮，打开「病案室 / 体检」双页签面板。
+  // 侧边栏入口：一个按钮，打开「养老院 / 体检」双页签面板。
   slots.inject('sidebar.footer.action', () => slots.register(
     { name: 'sidebar.footer.action', id: STEWARD_ENTRY_ID, order: 12 },
     (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound }),

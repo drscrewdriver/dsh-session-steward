@@ -2,7 +2,7 @@
 
 A DSH web plugin for **session history files** and **session health checks**. It never touches session data itself.
 
-- **Records Room (history files)** — browse the official archive set and prune ids in bulk
+- **Retirement Home (history files)** — browse the official archive set and prune ids in bulk
   (backup + atomic replace; a DSH restart is required for the host to reload it).
 - **Checkup (health)** — four gates → prescription (command list) → discharge (reversible repair with a
   before/after comparison).
@@ -38,7 +38,7 @@ Settings namespace `session-steward`; sidebar entry id `dsh-session-steward`.
 
 | Switch | Field | When off |
 |---|---|---|
-| Session history files | `historyFiles` (default true) | `session-history-*` is not registered and the Records Room tab is not rendered |
+| Session history files | `historyFiles` (default true) | `session-history-*` is not registered and the Retirement Home tab is not rendered |
 | Health check | `healthCheck` (default true) | `session-health-*` is not registered and the Checkup tab is not rendered |
 
 Closed domains return `{ ok: false, error: '子域已关闭（…=false）：<method> 未注册' }` — no empty shells.

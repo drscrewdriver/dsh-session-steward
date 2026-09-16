@@ -10,7 +10,7 @@
 export interface StewardConfig {
   /** 插件总开关。 */
   enabled: boolean
-  /** 会话历史文件（归档浏览与清理）。关闭后不注册 history 路由、不渲染「病案室」页签。 */
+  /** 会话历史文件（归档浏览与清理）。关闭后不注册 history 路由、不渲染「养老院」页签。 */
   historyFiles?: boolean
   /** 会话健康检查（体检 → 处方 → 出院）。关闭后不注册 health 路由、不渲染「体检」页签。 */
   healthCheck?: boolean

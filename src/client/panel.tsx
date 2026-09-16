@@ -1,7 +1,7 @@
 /**
- * 会话管家面板壳：一个侧边栏入口，两个页签（病案室 / 体检）。
+ * 会话管家面板壳：一个侧边栏入口，两个页签（养老院 / 体检）。
  *
- * 页签可见性由开关决定：`historyFiles=false` 时「病案室」消失，`healthCheck=false`
+ * 页签可见性由开关决定：`historyFiles=false` 时「养老院」消失，`healthCheck=false`
  * 时「体检」消失；两者都关时进入面板直接显示空壳提示（客户端也会隐藏入口）。
  */
 import { createElement, useEffect, useState, type ReactElement } from 'react'

@@ -3,7 +3,7 @@
  * （与搜索索引插件的 `/switch-search/api` **完全隔离**，方法名一律 `session-*`）。
  *
  * 两个子域由两个开关做 feature gate：
- * - `historyFiles`（会话历史文件 / 病案室）：`session-history-*`；
+ * - `historyFiles`（会话历史文件 / 养老院）：`session-history-*`；
  * - `healthCheck`（健康检查 / 体检）：`session-health-*`。
  * 关掉的子域**不注册对应方法**（调用返回显式 disabled 错误），不留空壳。
  *
@@ -259,13 +259,19 @@ export async function handleMethod(
   }
 
   if (method === 'session-health-scan') {
-    const request = (payload ?? {}) as { limit?: unknown; onlyProblems?: unknown }
+    const request = (payload ?? {}) as { limit?: unknown; offset?: unknown; onlyProblems?: unknown }
     const limit = typeof request.limit === 'number' && Number.isFinite(request.limit)
       ? Math.max(1, Math.min(MAX_SCAN_LIMIT, Math.floor(request.limit)))
       : 30
+    // offset 支持分批扫描：客户端用小批次连续调用并自行累计进度，
+    // 宿主保持无状态（不必改同步循环，也不必新增进度轮询端点）。
+    const offset = typeof request.offset === 'number' && Number.isFinite(request.offset) && request.offset > 0
+      ? Math.floor(request.offset)
+      : 0
     const result = scanSessions({
       dshHome: runtime.dshHome,
       limit,
+      offset,
       onlyProblems: request.onlyProblems !== false,
       attribute: runtime.attribute,
       projectionStateFor: runtime.projectionStateFor,

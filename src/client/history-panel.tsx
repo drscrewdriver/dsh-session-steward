@@ -1,5 +1,5 @@
 /**
- * 病案室（会话历史文件）面板 —— 自 dsh-session-search-toggle `src/client/archive-panel.tsx`
+ * 养老院（会话历史文件）面板 —— 自 dsh-session-search-toggle `src/client/archive-panel.tsx`
  * **迁入**并适配到本包的方法名（`session-history-list` / `session-history-prune`）。
  *
  * 行为与迁移前一致（含「显式编辑模式才允许清理」的门禁与 JS confirm）：
@@ -13,7 +13,7 @@ import { translate, type LocaleKey } from './locales.ts'
 /** 面板收到的字典面。 */
 export type PanelTranslate = (key: LocaleKey, params?: Record<string, unknown>) => string
 
-/** 病案室面板。 */
+/** 养老院面板。 */
 export function HistoryPanel({
   t,
   onClose,

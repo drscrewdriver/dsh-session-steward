@@ -12,8 +12,21 @@ import { join } from 'node:path'
 import { decodeSessionLogFile, type SessionLogRead } from './decode.ts'
 import { firstLosslessViolation, type LosslessViolation } from './lossless.ts'
 
-/** gate 严重级。 */
-export type GateLevel = 'ok' | 'warn' | 'fail'
+/**
+ * gate 严重级。
+ *
+ * 判定标准（新增 gate 必须遵守）：
+ * - `ok`：判定通过；
+ * - `warn`：**观测到了**异常现象，但尚不致命（必须有可复现的观测依据）；
+ * - `fail`：观测到硬损坏，判定不通过；
+ * - `skipped`：**无从观测/无从判定**（冷态会话没有热态投影、缓存记录尚未生成、
+ *   日志里没有 turn/end 可判）——中性档，不抬升会话总判。
+ *
+ * 关键区分：把「无法判定」记成 `warn` 是错的。那会让所有无从观测的会话恒为
+ * 「注意」，真信号被淹没（实测事故：30 条会话全标「注意」）。
+ * 无从观测 ⇒ `skipped`，有观测依据 ⇒ `warn`。
+ */
+export type GateLevel = 'ok' | 'warn' | 'fail' | 'skipped'
 
 /** 归属信息：把失败字段指回具体插件包与字段路径。 */
 export interface GateAttribution {
@@ -188,10 +201,12 @@ export function gateProjectionCache(facts: ProjectionCacheFacts): GateResult {
     return { id: 'projection-cache', level: 'warn', evidence: facts.error, detail: { path: facts.path } }
   }
   if (!facts.present) {
+    // 「记录不存在」是**无从判定**而非「观测到异常」：宿主会在下次检查点重建，
+    // 短时缺失属正常。记为 warn 会让所有尚无缓存的会话恒为「注意」（同 lossless 门缺陷）。
     return {
       id: 'projection-cache',
-      level: 'warn',
-      evidence: '投影缓存记录不存在（宿主会在下次检查点重建；若长期不出现说明检查点写入被拒）',
+      level: 'skipped',
+      evidence: '投影缓存记录不存在，本门无从判定（宿主会在下次检查点重建；若长期不出现说明检查点写入被拒）',
       detail: { path: facts.path },
     }
   }
@@ -225,13 +240,13 @@ export function gateLosslessJson(
   if (projectionState === undefined) {
     return {
       id: 'lossless-json',
-      level: 'warn',
-      evidence: '拿不到热态投影状态（宿主未暴露 sessionProjections）；冷态记录经 JSON 往返必然无损，无法判定',
+      level: 'skipped',
+      evidence: '拿不到热态投影状态（宿主未暴露 sessionProjections）；冷态记录经 JSON 往返必然无损，本门无从判定',
     }
   }
   const keys = Object.keys(projectionState)
   if (keys.length === 0) {
-    return { id: 'lossless-json', level: 'warn', evidence: '热态投影状态为空，无可判定行' }
+    return { id: 'lossless-json', level: 'skipped', evidence: '热态投影状态为空，本门无从判定' }
   }
   for (const key of keys) {
     const row = projectionState[key] as { val?: unknown } | undefined
@@ -272,7 +287,9 @@ export function gateColdRead(facts: TailFacts): GateResult {
     }
   }
   if (facts.lastTurnEnd === undefined) {
-    return { id: 'cold-read', level: 'warn', evidence: '日志中没有 turn/end，无法确认存在可接续的已完成轮次', detail }
+    // 日志里没有 turn/end：可能是尚未完成首轮的空会话（无害），也可能是日志被截断。
+    // 本门区分不了 → 无从判定。日志损坏由 gate 1（撕裂帧/解码）负责，不在本门断言。
+    return { id: 'cold-read', level: 'skipped', evidence: '日志中没有 turn/end，本门无从确认是否存在可接续的已完成轮次', detail }
   }
   if (facts.lastTurnEnd.reason !== 'completed') {
     return {
@@ -300,6 +317,8 @@ export function buildSessionReport(context: GateContext): SessionHealthReport {
     gates.push(gateLosslessJson(context.projectionState, context.attribute))
     gates.push(gateColdRead(tail))
   }
+  // 总判聚合：fail > warn > ok。`skipped` 有意不参与——它是「本门无从判定」的
+  // 中性档，既非通过也非异常，抬升总判会把冷态会话全变成「注意」（实测噪声源）。
   const level: GateLevel = gates.some(gate => gate.level === 'fail')
     ? 'fail'
     : gates.some(gate => gate.level === 'warn') ? 'warn' : 'ok'

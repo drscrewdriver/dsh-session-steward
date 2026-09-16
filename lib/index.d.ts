@@ -469,7 +469,7 @@ declare abstract class Service<out T = never> {
 interface StewardConfig {
   /** 插件总开关。 */
   enabled: boolean;
-  /** 会话历史文件（归档浏览与清理）。关闭后不注册 history 路由、不渲染「病案室」页签。 */
+  /** 会话历史文件（归档浏览与清理）。关闭后不注册 history 路由、不渲染「养老院」页签。 */
   historyFiles?: boolean;
   /** 会话健康检查（体检 → 处方 → 出院）。关闭后不注册 health 路由、不渲染「体检」页签。 */
   healthCheck?: boolean;
@@ -631,8 +631,21 @@ declare function decodeSessionLogBytes(file: string, bytes: Buffer, decoders?: O
 declare function decodeSessionLogFile(file: string, decoders?: OfficialDecoders): SessionLogRead;
 //#endregion
 //#region src/host/health/gates.d.ts
-/** gate 严重级。 */
-type GateLevel = 'ok' | 'warn' | 'fail';
+/**
+ * gate 严重级。
+ *
+ * 判定标准（新增 gate 必须遵守）：
+ * - `ok`：判定通过；
+ * - `warn`：**观测到了**异常现象，但尚不致命（必须有可复现的观测依据）；
+ * - `fail`：观测到硬损坏，判定不通过；
+ * - `skipped`：**无从观测/无从判定**（冷态会话没有热态投影、缓存记录尚未生成、
+ *   日志里没有 turn/end 可判）——中性档，不抬升会话总判。
+ *
+ * 关键区分：把「无法判定」记成 `warn` 是错的。那会让所有无从观测的会话恒为
+ * 「注意」，真信号被淹没（实测事故：30 条会话全标「注意」）。
+ * 无从观测 ⇒ `skipped`，有观测依据 ⇒ `warn`。
+ */
+type GateLevel = 'ok' | 'warn' | 'fail' | 'skipped';
 /** 归属信息：把失败字段指回具体插件包与字段路径。 */
 interface GateAttribution {
   /** 投影 key（例如 liveTokenStats）。 */
@@ -806,19 +819,32 @@ declare function findSessionLog(sessionId: string, dshHome?: string): string | u
 /** 扫描结果。 */
 interface HealthScanResult {
   ok: boolean;
+  /** 本批实际体检的会话数（已访问数，不受 onlyProblems 过滤影响）。 */
   scanned: number;
+  /**
+   * 语料总数（进度分母）。分批调用时每批都拿到同一个值，客户端据此算
+   * `已访问 = offset + scanned` / `total`，宿主无需持有跨请求状态。
+   */
+  total: number;
+  /** 本批在语料中的起点（原样回显，便于客户端对账）。 */
+  offset: number;
   findings: SessionHealthReport[];
   /** 仅保留非 ok 的报告时使用。 */
   filtered?: boolean;
   error?: string;
 }
 /**
- * 批量体检。
- * @param options - dshHome / 扫描上限 / 是否只返回非 ok / 归属查询 / 热态状态提供者。
+ * 批量体检（支持分批）。
+ *
+ * 语料先整体列出（按 mtime 倒序，≤ DISCOVERY_LIMIT），再按 `[offset, offset+limit)`
+ * 切片扫描。这样客户端可以用小批次连续调用、自己累计真实进度，而宿主保持无状态
+ * ——不必把同步循环改成异步，也不必新增进度轮询端点。
+ * @param options - dshHome / 批大小 / 批起点 / 是否只返回非 ok / 归属查询 / 热态状态提供者。
  */
 declare function scanSessions(options: {
   dshHome?: string;
   limit?: number;
+  offset?: number;
   onlyProblems?: boolean;
   attribute?: GateContext['attribute'];
   projectionStateFor?: (sessionId: string) => Record<string, unknown> | undefined;
