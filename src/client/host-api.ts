@@ -119,6 +119,14 @@ export interface HealthSessionResponse {
   error?: string
 }
 
+/** 处置结果的定性分类（与 host 侧 RepairVerdict 对齐）。 */
+export type RepairVerdict =
+  | 'nothing-to-do'
+  | 'repaired'
+  | 'repaired-with-residual'
+  | 'not-applicable'
+  | 'failed'
+
 /** 出院（可逆处置）响应。 */
 export interface HealthRepairResponse {
   ok: boolean
@@ -126,6 +134,12 @@ export interface HealthRepairResponse {
   before?: HealthReport
   after?: HealthReport
   repair?: { ok: boolean; from?: string; to?: string; error?: string; requiresRestart?: boolean }
+  /** 处置结果的定性分类：区分「生效」「生效但有无关残留」「无可处置项」「失败」。 */
+  verdict?: RepairVerdict
+  /** 人读说明：为什么处置后仍然异常（或已恢复）。 */
+  explanation?: string
+  /** 处置后仍未解决的门。 */
+  residual?: { id: HealthGate['id']; level: HealthGate['level'] }[]
   prescriptions?: string[]
   error?: string
 }

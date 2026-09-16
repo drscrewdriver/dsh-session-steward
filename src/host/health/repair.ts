@@ -10,7 +10,21 @@
 import { copyFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { SessionHealthReport } from './gates.ts'
+import type { GateLevel, SessionHealthReport } from './gates.ts'
+
+/**
+ * 该门是否构成「可处置的异常」。
+ *
+ * 判定标准与 gates.ts 的 GateLevel 文档一致：
+ *   `warn` / `fail` = **观测到了**异常现象（有据）→ 可开处方；
+ *   `skipped`       = 无从观测/无从判定（无据）→ 不开方。
+ *
+ * 早期版本用 `level !== 'ok'` 判断，把 `skipped` 也算成异常，导致对着
+ * 「本门无从判定」的证据输出「投影缓存未对齐」，并建议隔离一条不存在的记录。
+ */
+function isActionable(level: GateLevel | undefined): boolean {
+  return level === 'warn' || level === 'fail'
+}
 
 /** 可逆处置的结果。 */
 export interface RepairOutcome {
@@ -103,8 +117,8 @@ export function prescribe(report: SessionHealthReport, dshHome?: string): string
   }
 
   const cache = gate('projection-cache')
-  if (cache?.level !== 'ok') {
-    lines.push(`# 投影缓存未对齐：${cache?.evidence ?? '未知'}`)
+  if (isActionable(cache?.level)) {
+    lines.push(`# 投影缓存异常：${cache?.evidence ?? '未知'}`)
     lines.push('# 1) 先隔离陈旧记录，再重启宿主让其重折叠')
     lines.push(`#    POST /session-steward/api/session-health-repair {"sessionId":"${report.sessionId}"}`)
   }
@@ -115,7 +129,11 @@ export function prescribe(report: SessionHealthReport, dshHome?: string): string
   }
 
   if (lines.length === 0) {
-    lines.push('# 四门全绿：无需处置')
+    // 「无从判定」不是「全绿」：把 skipped 的门如实列出，避免用户以为都检查过了。
+    const unjudged = report.gates.filter(entry => entry.level === 'skipped')
+    lines.push(unjudged.length === 0
+      ? '# 四门全绿：无需处置'
+      : `# 无可处置项（${unjudged.length} 门无从判定，非异常）：${unjudged.map(entry => entry.id).join(' / ')}`)
   }
   return lines
 }
@@ -123,4 +141,77 @@ export function prescribe(report: SessionHealthReport, dshHome?: string): string
 /** 供 UI 提示的 DSH home 描述（不暴露绝对路径以外的敏感信息）。 */
 export function describeHome(dshHome?: string): string {
   return dshHome ?? join(homedir(), '.dsh')
+}
+
+/** 处置结果的定性分类。 */
+export type RepairVerdict =
+  /** 四门全绿，没有要做的事。 */
+  | 'nothing-to-do'
+  /** 处置生效且异常已消除。 */
+  | 'repaired'
+  /** 处置生效，但仍有与投影缓存无关的异常（如会话日志的 open step）。 */
+  | 'repaired-with-residual'
+  /** 没有任何可逆处置项能命中当前异常。 */
+  | 'not-applicable'
+  /** 处置本身执行失败。 */
+  | 'failed'
+
+/** 处置结果的判定。 */
+export interface RepairAssessment {
+  verdict: RepairVerdict
+  /** 人读说明：直接展示给用户，解释「为什么处置后还是异常/已恢复」。 */
+  explanation: string
+  /** 处置后仍未解决的门（可处置档位）。 */
+  residual: { id: string; level: GateLevel }[]
+}
+
+/**
+ * 判定一次处置的结果，并给出人读说明。
+ *
+ * 存在的理由：处置**只**隔离投影缓存记录，而会话的异常可能来自别处
+ * （最典型是 `cold-read` 的 open step——插件红线不改会话日志，这类异常
+ * 本就不该由处置修复）。旧版 UI 只显示 `处置前/处置后` 两个档位，
+ * 两者都是「异常」时用户无法判断是处置失败还是处置与病灶无关。
+ *
+ * @param input - 处置前后的报告与处置执行结果。
+ */
+export function assessRepair(input: {
+  before: SessionHealthReport
+  after: SessionHealthReport
+  repair: RepairOutcome
+}): RepairAssessment {
+  const { before, after, repair } = input
+  const residual = after.gates
+    .filter(entry => entry.level === 'warn' || entry.level === 'fail')
+    .map(entry => ({ id: entry.id, level: entry.level }))
+  const residualIds = residual.map(entry => entry.id).join(' / ')
+
+  if (before.level === 'ok') {
+    return { verdict: 'nothing-to-do', explanation: '四门全绿，无需处置', residual: [] }
+  }
+
+  if (repair.ok) {
+    return residual.length === 0
+      ? { verdict: 'repaired', explanation: '处置生效：已隔离投影缓存记录，体检结果已恢复', residual: [] }
+      : {
+          verdict: 'repaired-with-residual',
+          explanation: `已隔离投影缓存记录；但仍有与该缓存无关的异常：${residualIds}。` +
+            '这类异常来自会话日志或宿主运行态，本插件不改会话日志，请等待宿主结算后重新体检。',
+          residual,
+        }
+  }
+
+  // 处置未能执行：先判断当前异常里到底有没有可处置项。
+  const cacheGate = before.gates.find(entry => entry.id === 'projection-cache')
+  if (!isActionable(cacheGate?.level)) {
+    return {
+      verdict: 'not-applicable',
+      explanation: residualIds === ''
+        ? '当前异常无可逆处置项'
+        : `当前异常无可逆处置项（投影缓存无可隔离记录）；异常来自 ${residualIds}，` +
+          '本插件不改会话日志，请等待宿主结算后重新体检。',
+      residual,
+    }
+  }
+  return { verdict: 'failed', explanation: `处置失败：${repair.error ?? '未知原因'}`, residual }
 }

@@ -268,9 +268,18 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
       createElement('span', { key: 'a', className: `dss_levelPill dss_level_${discharge.after?.level ?? 'warn'}` },
         `${translate(t, 'health.after')}: ${translate(t, LEVEL_LABEL[discharge.after?.level ?? 'warn'])}`),
     ]))
+    // 定性结论优先于机械的 before/after：处置只隔离投影缓存，
+    // 异常若来自会话日志（如 open step），两个档位都会是「异常」，
+    // 只摆档位会让人以为处置失败。explanation 直接说清是什么情况。
+    if (discharge.explanation !== undefined && discharge.explanation !== '') {
+      lines.push(createElement('div', {
+        key: 'verdict',
+        className: `dss_verdict dss_verdict_${discharge.verdict ?? 'failed'}`,
+      }, discharge.explanation))
+    }
     if (discharge.repair?.ok === true) {
       lines.push(createElement('div', { key: 'repairNote', className: 'dss_status' },
-        `已隔离投影缓存记录 → ${discharge.repair.to ?? ''}（重启 DSH 后重折叠）`))
+        `${translate(t, 'health.quarantined')} → ${discharge.repair.to ?? ''}`))
     } else if (discharge.repair?.error !== undefined) {
       lines.push(createElement('div', { key: 'repairErr', className: 'dss_status' }, discharge.repair.error))
     }

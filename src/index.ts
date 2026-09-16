@@ -24,7 +24,7 @@ import { listHistory, pruneHistory, storagePathsFor } from './host/history/archi
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
-import { prescribe, quarantineProjectionCache } from './host/health/repair.ts'
+import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
 import { findSessionLog, scanSessions } from './host/health/scan.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
@@ -299,20 +299,39 @@ export async function handleMethod(
     return { ok: true, report, prescriptions: prescribe(report, runtime.dshHome) }
   }
 
-  // session-health-repair：出院前的可逆处置 + before/after 对照
+  // session-health-repair：出院前的可逆处置 + before/after 对照 + 结果定性
   const before = reportFor()
   if (before.level === 'ok') {
-    return { ok: true, changed: false, before, after: before, repair: null, prescriptions: ['# 四门全绿：无需处置'] }
+    const clean = assessRepair({ before, after: before, repair: { ok: false, action: 'quarantine-projection-cache', sessionId, from: '' } })
+    return {
+      ok: true,
+      changed: false,
+      before,
+      after: before,
+      repair: null,
+      verdict: clean.verdict,
+      explanation: clean.explanation,
+      residual: clean.residual,
+      prescriptions: ['# 四门全绿：无需处置'],
+    }
   }
   const repair = quarantineProjectionCache(sessionId, runtime.dshHome)
   const after = reportFor()
-  runtime.log(`health repair ${sessionId}: quarantine=${repair.ok ? 'ok' : repair.error ?? 'skipped'} before=${before.level} after=${after.level}`)
+  // 处置只隔离投影缓存记录；异常若来自别处（如 open step），处置必然无变化。
+  // 定性结论把这个事实讲清楚，否则用户只看到「异常 → 异常」会以为功能坏了。
+  const assessment = assessRepair({ before, after, repair })
+  runtime.log(
+    `health repair ${sessionId}: verdict=${assessment.verdict} quarantine=${repair.ok ? 'ok' : repair.error ?? 'skipped'} before=${before.level} after=${after.level}`,
+  )
   return {
     ok: true,
     changed: repair.ok,
     repair,
     before,
     after,
+    verdict: assessment.verdict,
+    explanation: assessment.explanation,
+    residual: assessment.residual,
     prescriptions: prescribe(after, runtime.dshHome),
   }
 }
