@@ -101,13 +101,19 @@ export interface HealthReport {
 /** 体检扫描响应。 */
 export interface HealthScanResponse {
   ok: boolean
+  /** 本次响应是否来自缓存（`resume: true` 时的命中标记）。 */
+  cached?: boolean
   /** 本批已访问的会话数（分批扫描的进度步长）。 */
   scanned?: number
-  /** 语料总数（进度分母）。 */
+  /** 语料总数（进度分母）；缓存命中时为**缓存生成时**的语料总数。 */
   total?: number
   /** 本批起点（原样回显）。 */
   offset?: number
   findings?: HealthReport[]
+  /** 缓存的生成时刻（epoch ms）；仅缓存命中时给出。 */
+  generatedAt?: number
+  /** 当前语料总数；与 `total` 不一致即「语料已变化」。 */
+  currentTotal?: number
   error?: string
 }
 

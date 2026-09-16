@@ -101,6 +101,7 @@ function injectStyles(): () => void {
 .dss_progressFill{height:100%;border-radius:999px;background:var(--dsw-alias-state-business-primary,#3d5be0);transition:width .2s ease}
 .dss_progressIndeterminate{width:35%;animation:dssSlide 1.1s ease-in-out infinite}
 .dss_why{font-size:12px;color:var(--dsw-alias-label-secondary,#6b7280);flex:1;min-width:0}
+.dss_cacheRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
 .dss_spinner{width:11px;height:11px;margin-right:6px;border-radius:50%;display:inline-block;vertical-align:-1px;border:2px solid currentColor;border-top-color:transparent;animation:dssSpin .7s linear infinite}
 @keyframes dssSpin{to{transform:rotate(360deg)}}
 @keyframes dssSlide{0%{margin-left:-35%}100%{margin-left:100%}}

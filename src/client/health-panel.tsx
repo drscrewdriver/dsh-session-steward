@@ -41,6 +41,22 @@ const LEVEL_LABEL = {
  */
 const SCAN_BATCH = 5
 
+/**
+ * 把缓存生成时刻折成一个粗粒度的相对时间 key。
+ *
+ * 不引第三方 i18n/时间库：四档粒度足够表达「这是刚才的 / 是昨天的」，
+ * 而这正是用户判断「要不要刷新」所需的全部信息。
+ */
+function relativeAgo(generatedAt: number, now: number): { key: LocaleKey; n: number } {
+  const seconds = Math.max(0, Math.round((now - generatedAt) / 1000))
+  if (seconds < 60) return { key: 'health.ago.justNow', n: 0 }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return { key: 'health.ago.minutes', n: minutes }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return { key: 'health.ago.hours', n: hours }
+  return { key: 'health.ago.days', n: Math.floor(hours / 24) }
+}
+
 /** 体检面板。 */
 export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () => void }): ReactElement {
   const [scanning, setScanning] = useState(false)
@@ -54,12 +70,39 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [startedAt, setStartedAt] = useState(0)
   const [elapsedMs, setElapsedMs] = useState(0)
+  /** 缓存命中时的元信息；非 null 即「当前列表来自缓存」，必须露出生成时间。 */
+  const [cacheInfo, setCacheInfo] = useState<{ generatedAt: number; total: number; currentTotal: number } | null>(null)
+  /** 相对时间的走字刻度：缓存提示里的「N 分钟前」需要自己更新。 */
+  const [, setClockTick] = useState(0)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey) }
   }, [onClose])
+
+  // 挂载时零成本探一次缓存：命中就直接出内容。
+  // 不命中时**什么都不做**——绝不偷偷跑扫描，挂载即干重活正是上一版被诟病的地方。
+  useEffect(() => {
+    void callHostAny<HealthScanResponse>('session-health-scan', { resume: true }, 30_000)
+      .then((res) => {
+        if (res.ok === true && res.cached === true) {
+          setFindings(res.findings ?? [])
+          setCacheInfo({
+            generatedAt: res.generatedAt ?? 0,
+            total: res.total ?? 0,
+            currentTotal: res.currentTotal ?? res.total ?? 0,
+          })
+        }
+      })
+  }, [])
+
+  // 相对时间的走字：只在确实显示缓存提示时才起定时器。
+  useEffect(() => {
+    if (cacheInfo === null) return
+    const timer = setInterval(() => { setClockTick(tick => tick + 1) }, 30_000)
+    return () => { clearInterval(timer) }
+  }, [cacheInfo])
 
   // 计时器只在扫描期间跑：给「不知道是否还在运行」一个可动的读数。
   useEffect(() => {
@@ -68,12 +111,15 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     return () => { clearInterval(timer) }
   }, [scanning, startedAt])
 
-  const runScan = (): void => {
+  const runScan = (options?: { forceRefresh?: boolean }): void => {
+    // 「刷新」跳过首批的缓存探测，强制重扫；首次体检则允许直接吃缓存。
+    const forceRefresh = options?.forceRefresh === true
     setScanning(true)
     setError(null)
     setDetail(null)
     setDischarge(null)
     setFindings(null)
+    setCacheInfo(null)
     setProgress({ done: 0, total: 0 })
     setStartedAt(Date.now())
     setElapsedMs(0)
@@ -84,11 +130,27 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
         for (;;) {
           const res = await callHostAny<HealthScanResponse>(
             'session-health-scan',
-            { limit: SCAN_BATCH, offset, onlyProblems: true },
+            {
+              limit: SCAN_BATCH,
+              offset,
+              onlyProblems: true,
+              ...(offset === 0 && !forceRefresh ? { resume: true } : {}),
+            },
             120_000,
           )
           if (res.ok !== true) {
             setError(res.error ?? '体检失败')
+            return
+          }
+          // 缓存命中：零扫描直接出内容，带生成时间供面板标注「这是多久前的」。
+          if (res.cached === true) {
+            setFindings(res.findings ?? [])
+            setCacheInfo({
+              generatedAt: res.generatedAt ?? 0,
+              total: res.total ?? 0,
+              currentTotal: res.currentTotal ?? res.total ?? 0,
+            })
+            setProgress(null)
             return
           }
           const total = res.total ?? 0
@@ -108,13 +170,31 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     })()
   }
 
+  /**
+   * 把单会话的最新报告同步进列表。
+   *
+   * 宿主侧缓存已就地回写（见 index.ts 的 `cache?.patch`），客户端列表必须同步，
+   * 否则退回列表时会看到已被处置的行还挂着旧档位。
+   */
+  const reconcileRow = (next: HealthReport): void => {
+    setFindings((prev) => {
+      if (prev === null) return prev
+      const index = prev.findIndex(item => item.sessionId === next.sessionId)
+      // 与缓存视图同构：只列非 ok，转好的行直接摘掉。
+      if (next.level === 'ok') return index < 0 ? prev : prev.filter(item => item.sessionId !== next.sessionId)
+      return index < 0 ? [...prev, next] : prev.map(item => (item.sessionId === next.sessionId ? next : item))
+    })
+  }
+
   const openDetail = (sessionId: string): void => {
     setError(null)
     setDischarge(null)
     void callHostAny<HealthSessionResponse>('session-health-session', { sessionId }, 120_000)
       .then((res) => {
-        if (res.ok === true) setDetail(res)
-        else setError(res.error ?? '读取体检详情失败')
+        if (res.ok === true) {
+          setDetail(res)
+          if (res.report !== undefined) reconcileRow(res.report)
+        } else setError(res.error ?? '读取体检详情失败')
       })
       .catch((err: unknown) => setError(String(err instanceof Error ? err.message : err)))
   }
@@ -126,7 +206,10 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
       .then((res) => {
         if (res.ok === true) {
           setDischarge(res)
-          if (res.after !== undefined) setDetail({ ok: true, report: res.after, prescriptions: res.prescriptions })
+          if (res.after !== undefined) {
+            setDetail({ ok: true, report: res.after, prescriptions: res.prescriptions })
+            reconcileRow(res.after)
+          }
         } else {
           setError(res.error ?? '处置失败')
         }
@@ -175,6 +258,24 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
           total: total > 0 ? total : '?',
           sec: (elapsedMs / 1000).toFixed(1),
         })),
+    ]))
+  }
+
+  // 缓存提示：必须显式写出生成时间——旧结果绝不能冒充刚扫的。
+  // 语料总数对不上时顺带提示刷新（枚举语料很便宜，所以这条判断不构成新的失效策略）。
+  if (cacheInfo !== null && !scanning && detail === null && discharge === null) {
+    const ago = relativeAgo(cacheInfo.generatedAt, Date.now())
+    lines.push(createElement('div', { key: 'cache', className: 'dss_cacheRow' }, [
+      createElement('span', { key: 'h', className: 'dss_meta' },
+        translate(t, 'health.cache.hint', { ago: translate(t, ago.key, { n: ago.n }) })),
+      cacheInfo.currentTotal !== cacheInfo.total && createElement('span', { key: 'chg', className: 'dss_why' },
+        translate(t, 'health.cache.corpusChanged', { was: cacheInfo.total, now: cacheInfo.currentTotal })),
+      createElement('button', {
+        key: 'r',
+        type: 'button',
+        className: 'dss_actBtn',
+        onClick: () => { runScan({ forceRefresh: true }) },
+      }, translate(t, 'health.cache.refresh')),
     ]))
   }
 

@@ -23,9 +23,10 @@ import {
 import { listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
+import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
 import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
-import { findSessionLog, scanSessions } from './host/health/scan.ts'
+import { countCorpus, findSessionLog, scanSessions } from './host/health/scan.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
 export type { StewardConfig } from './config.ts'
@@ -36,7 +37,11 @@ export { firstLosslessViolation, isLossless } from './host/health/lossless.ts'
 export { decodeSessionLogBytes, decodeSessionLogFile, scanZstdFrames } from './host/health/decode.ts'
 export { buildProjectionOwnerIndex, createAttributor } from './host/health/attribution.ts'
 export { prescribe, quarantineProjectionCache } from './host/health/repair.ts'
-export { discoverSessions, findSessionLog, scanSessions } from './host/health/scan.ts'
+export { countCorpus, discoverSessions, findSessionLog, scanSessions } from './host/health/scan.ts'
+export { HealthCache } from './host/health/cache.ts'
+export type { HealthCacheEntry } from './host/health/cache.ts'
+export { assessRepair } from './host/health/repair.ts'
+export type { RepairAssessment, RepairVerdict } from './host/health/repair.ts'
 
 /** 本插件声明的宿主服务（与 toggle 相同的注入面）。 */
 export const inject = ['webServer', 'webRuntime']
@@ -200,6 +205,13 @@ export interface StewardRuntime {
   projectionStateFor: (sessionId: string) => Record<string, unknown> | undefined
   attribute: (projection: string) => { projection?: string; package?: string; field?: string } | undefined
   log: (message: string) => void
+  /**
+   * 体检结果缓存（进程内，随 fiber 存活）。
+   *
+   * 可选：缺省表示本次装配不启用缓存（只影响「关面板重开」是否零延迟，
+   * 不影响任何判定结果）。`apply()` 总是提供实例。
+   */
+  cache?: HealthCache
 }
 
 /** 支持的路由方法（按子域分组；用于对外声明与测试断言）。 */
@@ -259,12 +271,34 @@ export async function handleMethod(
   }
 
   if (method === 'session-health-scan') {
-    const request = (payload ?? {}) as { limit?: unknown; offset?: unknown; onlyProblems?: unknown }
+    const request = (payload ?? {}) as { limit?: unknown; offset?: unknown; onlyProblems?: unknown; resume?: unknown }
+    const onlyProblems = request.onlyProblems !== false
+
+    // resume：**纯读缓存，不扫描**（面板挂载时零成本探一次）。
+    // 无缓存时如实回 cached:false 并捎带语料总数，让面板知道「有多少待体检」，
+    // 而不是偷偷跑一批——挂载就干重活是上一版被诟病的问题。
+    if (request.resume === true) {
+      const cached = runtime.cache?.read()
+      if (cached === undefined) {
+        return { ok: true, cached: false, scanned: 0, total: countCorpus(runtime.dshHome), offset: 0, findings: [] }
+      }
+      return {
+        ok: true,
+        cached: true,
+        scanned: 0,
+        total: cached.total,
+        offset: 0,
+        findings: cached.findings,
+        generatedAt: cached.generatedAt,
+        // 当前语料总数：客户端据此提示「语料已变化，建议刷新」。
+        currentTotal: countCorpus(runtime.dshHome),
+      }
+    }
+
     const limit = typeof request.limit === 'number' && Number.isFinite(request.limit)
       ? Math.max(1, Math.min(MAX_SCAN_LIMIT, Math.floor(request.limit)))
       : 30
-    // offset 支持分批扫描：客户端用小批次连续调用并自行累计进度，
-    // 宿主保持无状态（不必改同步循环，也不必新增进度轮询端点）。
+    // offset 支持分批扫描：客户端用小批次连续调用并自行累计进度。
     const offset = typeof request.offset === 'number' && Number.isFinite(request.offset) && request.offset > 0
       ? Math.floor(request.offset)
       : 0
@@ -272,10 +306,16 @@ export async function handleMethod(
       dshHome: runtime.dshHome,
       limit,
       offset,
-      onlyProblems: request.onlyProblems !== false,
+      onlyProblems,
       attribute: runtime.attribute,
       projectionStateFor: runtime.projectionStateFor,
     })
+    // 累积缓存：`offset: 0` 起一轮，走满语料才成型（半途而废不留半份缓存）。
+    // 只累积「只列问题」的视图；onlyProblems=false 的扫描不碰缓存。
+    if (result.ok && onlyProblems) {
+      if (offset === 0) runtime.cache?.begin(result.total)
+      runtime.cache?.append(result.findings, result.scanned)
+    }
     return result
   }
 
@@ -296,12 +336,18 @@ export async function handleMethod(
 
   if (method === 'session-health-session') {
     const report = reportFor()
+    // 单条体检可能改变该会话的档位（如宿主已结算 open step）：就地回写缓存，
+    // 免得为了刷新一行而重扫整个语料。
+    runtime.cache?.patch(report)
     return { ok: true, report, prescriptions: prescribe(report, runtime.dshHome) }
   }
 
   // session-health-repair：出院前的可逆处置 + before/after 对照 + 结果定性
   const before = reportFor()
   if (before.level === 'ok') {
+    // 缓存里可能还留着这个会话的旧档位（扫描时是 warn，宿主后来结算了）：
+    // 就地回写把这个陈旧行摘掉。
+    runtime.cache?.patch(before)
     const clean = assessRepair({ before, after: before, repair: { ok: false, action: 'quarantine-projection-cache', sessionId, from: '' } })
     return {
       ok: true,
@@ -320,6 +366,8 @@ export async function handleMethod(
   // 处置只隔离投影缓存记录；异常若来自别处（如 open step），处置必然无变化。
   // 定性结论把这个事实讲清楚，否则用户只看到「异常 → 异常」会以为功能坏了。
   const assessment = assessRepair({ before, after, repair })
+  // 处置本就重算了 after：把它写回缓存，面板退回列表时该行即是最新档位。
+  runtime.cache?.patch(after)
   runtime.log(
     `health repair ${sessionId}: verdict=${assessment.verdict} quarantine=${repair.ok ? 'ok' : repair.error ?? 'skipped'} before=${before.level} after=${after.level}`,
   )
@@ -403,6 +451,7 @@ export function apply(ctx: Context): void {
     projectionStateFor,
     attribute: attributor,
     log,
+    cache: new HealthCache(),
   }
 
   const initial = current()

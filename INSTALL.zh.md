@@ -44,7 +44,7 @@ dsh plugin --profile <profile> add dsh-session-steward -w
 显式安装指定版本：
 
 ```bash
-dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.2 -w
+dsh plugin --profile <profile> add dsh-session-steward@0.1.0-alpha.3 -w
 ```
 
 官方 CLI 会自动更新 profile 依赖、锁文件与 `dsh.profile.bundles`。不要手工添加 YAML 行。
@@ -55,7 +55,7 @@ DSH 运行时使用 pnpm 11，其 `minimumReleaseAge` 策略可能拦截刚发�
 
 ```yaml
 minimumReleaseAgeExclude:
-  - dsh-session-steward@0.1.0-alpha.2
+  - dsh-session-steward@0.1.0-alpha.3
 ```
 
 ## 2. 重启宿主

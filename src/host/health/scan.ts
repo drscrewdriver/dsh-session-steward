@@ -60,6 +60,17 @@ export function discoverSessions(dshHome?: string, limit = 200): DiscoveredSessi
   return out.slice(0, Math.max(1, limit))
 }
 
+/**
+ * 语料总数：只做目录枚举，**不跑体检**。
+ *
+ * 用于判断缓存是否已过期——枚举很便宜，而重扫要解 zstd、跑四门。
+ * 正因为两者代价差着量级，「对账」才不构成缓存失效策略本身。
+ * @param dshHome - DSH home（缺省 ~/.dsh）。
+ */
+export function countCorpus(dshHome?: string): number {
+  return discoverSessions(dshHome, DISCOVERY_LIMIT).length
+}
+
 /** 定位一个会话的日志路径（跨工程目录查找）。 */
 export function findSessionLog(sessionId: string, dshHome?: string): string | undefined {
   return discoverSessions(dshHome, 100_000).find(session => session.sessionId === sessionId)?.logPath

@@ -73,6 +73,16 @@ export const zh = {
   'health.copied': '已复制',
   'health.detail': '查看详情',
   'health.back': '返回列表',
+
+  // 缓存：体检结果在宿主进程内留一份，关面板重开零延迟。
+  // 生成时间必须显式露出——旧结果不能冒充刚扫的。
+  'health.cache.hint': '结果来自缓存 · {ago}',
+  'health.cache.refresh': '刷新',
+  'health.cache.corpusChanged': '语料已变化（{was} → {now}），建议刷新',
+  'health.ago.justNow': '刚刚',
+  'health.ago.minutes': '{n} 分钟前',
+  'health.ago.hours': '{n} 小时前',
+  'health.ago.days': '{n} 天前',
 } as const
 
 /** English dictionary (same keys). */
@@ -138,6 +148,14 @@ export const en: Record<LocaleKey, string> = {
   'health.copied': 'Copied',
   'health.detail': 'Details',
   'health.back': 'Back',
+
+  'health.cache.hint': 'Cached result · {ago}',
+  'health.cache.refresh': 'Refresh',
+  'health.cache.corpusChanged': 'Corpus changed ({was} → {now}); refresh recommended',
+  'health.ago.justNow': 'just now',
+  'health.ago.minutes': '{n} min ago',
+  'health.ago.hours': '{n} h ago',
+  'health.ago.days': '{n} d ago',
 }
 
 /** 字典查找（缺 key 时回退到内置 zh，再回退 key 本身）。 */

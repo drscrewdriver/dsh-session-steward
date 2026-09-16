@@ -515,61 +515,6 @@ declare function pruneArchiveFile(ids: readonly string[], log?: (msg: string) =>
   file?: string;
 };
 //#endregion
-//#region src/host/history/archive.d.ts
-/** 一行历史文件条目（尽力而为的元数据）。 */
-interface StewardHistoryRow {
-  sessionId: string;
-  title: string;
-  cwd: string;
-  updatedAt: number;
-}
-/** 列表结果。 */
-interface StewardHistoryListResult {
-  ok: boolean;
-  items?: StewardHistoryRow[];
-  /** 归档集合来源；`none` 表示两处都没读到。 */
-  source?: 'registry' | 'storage-file' | 'none';
-  /** 元数据降级原因（标题/cwd 缺失时给出）。 */
-  degraded?: string;
-  error?: string;
-}
-/** 标题快照读取面（结构化镜像，零 value import）。 */
-interface StewardTitleQueryFace {
-  readTitleSnapshots?(ids: readonly string[]): Promise<readonly {
-    status: 'fulfilled' | 'rejected';
-    value?: {
-      title?: {
-        title: string;
-      };
-    };
-  }[]>;
-}
-/**
- * `session-history-list`：列出官方归档集合（尽力附带标题等元数据）。
- * @param getRegistry - 惰性 workspaceRegistry 面。
- * @param query - 可选标题快照面。
- * @param searchPaths - 可选存储文件候选路径（DSH_HOME 非默认值/测试注入）。
- * @returns 归档行清单。
- */
-declare function listHistory(getRegistry: () => StewardRegistryFace | undefined, query?: StewardTitleQueryFace, searchPaths?: readonly string[]): Promise<StewardHistoryListResult>;
-/** 清理结果。 */
-interface StewardHistoryPruneResult {
-  ok: boolean;
-  removed?: number;
-  remaining?: number;
-  requiresRestart?: boolean;
-  error?: string;
-}
-/**
- * `session-history-prune`：从官方归档数组中批量移除会话 id。
- * 行为与迁移前等价：校验入参 → 备份并原子替换存储文件 → 返回 removed/remaining，
- * 并明确要求重启 DSH（宿主内存中的集合只在启动时重载）。
- * @param payload - `{ sessionIds: string[] }`。
- * @param log - 可选日志出口。
- * @param searchPaths - 可选候选路径覆盖（测试注入用）。
- */
-declare function pruneHistory(payload: unknown, log?: (msg: string) => void, searchPaths?: readonly string[]): StewardHistoryPruneResult;
-//#endregion
 //#region src/host/health/decode.d.ts
 /** 一次读取的统计与问题清单。 */
 interface SessionLogRead {
@@ -725,6 +670,103 @@ declare function gateColdRead(facts: TailFacts): GateResult;
 /** 聚合四门结果为一份报告。 */
 declare function buildSessionReport(context: GateContext): SessionHealthReport;
 //#endregion
+//#region src/host/health/cache.d.ts
+/** 一份已成型的缓存。 */
+interface HealthCacheEntry {
+  /** 非 ok 的会话报告（与 `onlyProblems: true` 的扫描结果同构）。 */
+  findings: SessionHealthReport[];
+  /** 生成这份缓存时的语料总数（用于「语料已变化」判断）。 */
+  total: number;
+  /** 生成时刻（epoch ms）。面板据此显示「N 分钟前」。 */
+  generatedAt: number;
+}
+/** 进程内体检缓存：分批扫描过程中累积，走完一遍语料才成型。 */
+declare class HealthCache {
+  private ready;
+  private pending;
+  /** 读当前成型的缓存（未成型则 undefined）。 */
+  read(): HealthCacheEntry | undefined;
+  /** 开始一轮分批扫描（客户端以 `offset: 0` 发起时调用）。 */
+  begin(total: number): void;
+  /**
+   * 追加一批扫描结果。
+   *
+   * 只有累积的已访问数走满语料总数才成型；语言中途断掉（关面板、报错）不会留下
+   * 半份缓存冒充完整结果。
+   * @param findings - 本批的非 ok 报告。
+   * @param scanned - 本批**已访问**的会话数（不是命中数）。
+   * @param now - 时间源（测试可控）。
+   * @returns 本批追加后缓存是否刚好成型。
+   */
+  append(findings: SessionHealthReport[], scanned: number, now?: () => number): boolean;
+  /**
+   * 单条就地回写（单会话体检 / 可逆处置后调用）。
+   *
+   * 这是缓存的**关键收益**：处置本就重算了 `after` 报告，把它写回即可，
+   * 不必为了刷新一行而重扫整个语料。
+   * @param report - 重算出的单会话报告。
+   * @returns 是否真的改动了缓存（无缓存时为 false）。
+   */
+  patch(report: SessionHealthReport): boolean;
+  /** 丢弃缓存与未完成的累积。 */
+  clear(): void;
+}
+//#endregion
+//#region src/host/history/archive.d.ts
+/** 一行历史文件条目（尽力而为的元数据）。 */
+interface StewardHistoryRow {
+  sessionId: string;
+  title: string;
+  cwd: string;
+  updatedAt: number;
+}
+/** 列表结果。 */
+interface StewardHistoryListResult {
+  ok: boolean;
+  items?: StewardHistoryRow[];
+  /** 归档集合来源；`none` 表示两处都没读到。 */
+  source?: 'registry' | 'storage-file' | 'none';
+  /** 元数据降级原因（标题/cwd 缺失时给出）。 */
+  degraded?: string;
+  error?: string;
+}
+/** 标题快照读取面（结构化镜像，零 value import）。 */
+interface StewardTitleQueryFace {
+  readTitleSnapshots?(ids: readonly string[]): Promise<readonly {
+    status: 'fulfilled' | 'rejected';
+    value?: {
+      title?: {
+        title: string;
+      };
+    };
+  }[]>;
+}
+/**
+ * `session-history-list`：列出官方归档集合（尽力附带标题等元数据）。
+ * @param getRegistry - 惰性 workspaceRegistry 面。
+ * @param query - 可选标题快照面。
+ * @param searchPaths - 可选存储文件候选路径（DSH_HOME 非默认值/测试注入）。
+ * @returns 归档行清单。
+ */
+declare function listHistory(getRegistry: () => StewardRegistryFace | undefined, query?: StewardTitleQueryFace, searchPaths?: readonly string[]): Promise<StewardHistoryListResult>;
+/** 清理结果。 */
+interface StewardHistoryPruneResult {
+  ok: boolean;
+  removed?: number;
+  remaining?: number;
+  requiresRestart?: boolean;
+  error?: string;
+}
+/**
+ * `session-history-prune`：从官方归档数组中批量移除会话 id。
+ * 行为与迁移前等价：校验入参 → 备份并原子替换存储文件 → 返回 removed/remaining，
+ * 并明确要求重启 DSH（宿主内存中的集合只在启动时重载）。
+ * @param payload - `{ sessionIds: string[] }`。
+ * @param log - 可选日志出口。
+ * @param searchPaths - 可选候选路径覆盖（测试注入用）。
+ */
+declare function pruneHistory(payload: unknown, log?: (msg: string) => void, searchPaths?: readonly string[]): StewardHistoryPruneResult;
+//#endregion
 //#region src/host/health/lossless.d.ts
 /**
  * 无损 JSON 判定 —— 本次事故的核心 gate 判据。
@@ -803,6 +845,44 @@ declare function quarantineProjectionCache(sessionId: string, dshHome?: string, 
  * @returns 可复制执行的命令与人读说明。
  */
 declare function prescribe(report: SessionHealthReport, dshHome?: string): string[];
+/** 处置结果的定性分类。 */
+type RepairVerdict =
+/** 四门全绿，没有要做的事。 */
+'nothing-to-do' |
+/** 处置生效且异常已消除。 */
+'repaired' |
+/** 处置生效，但仍有与投影缓存无关的异常（如会话日志的 open step）。 */
+'repaired-with-residual' |
+/** 没有任何可逆处置项能命中当前异常。 */
+'not-applicable' |
+/** 处置本身执行失败。 */
+'failed';
+/** 处置结果的判定。 */
+interface RepairAssessment {
+  verdict: RepairVerdict;
+  /** 人读说明：直接展示给用户，解释「为什么处置后还是异常/已恢复」。 */
+  explanation: string;
+  /** 处置后仍未解决的门（可处置档位）。 */
+  residual: {
+    id: string;
+    level: GateLevel;
+  }[];
+}
+/**
+ * 判定一次处置的结果，并给出人读说明。
+ *
+ * 存在的理由：处置**只**隔离投影缓存记录，而会话的异常可能来自别处
+ * （最典型是 `cold-read` 的 open step——插件红线不改会话日志，这类异常
+ * 本就不该由处置修复）。旧版 UI 只显示 `处置前/处置后` 两个档位，
+ * 两者都是「异常」时用户无法判断是处置失败还是处置与病灶无关。
+ *
+ * @param input - 处置前后的报告与处置执行结果。
+ */
+declare function assessRepair(input: {
+  before: SessionHealthReport;
+  after: SessionHealthReport;
+  repair: RepairOutcome;
+}): RepairAssessment;
 //#endregion
 //#region src/host/health/scan.d.ts
 /** 一个已发现的会话日志。 */
@@ -814,6 +894,14 @@ interface DiscoveredSession {
 }
 /** 枚举全部会话日志（按 mtime 倒序），带可选上限。 */
 declare function discoverSessions(dshHome?: string, limit?: number): DiscoveredSession[];
+/**
+ * 语料总数：只做目录枚举，**不跑体检**。
+ *
+ * 用于判断缓存是否已过期——枚举很便宜，而重扫要解 zstd、跑四门。
+ * 正因为两者代价差着量级，「对账」才不构成缓存失效策略本身。
+ * @param dshHome - DSH home（缺省 ~/.dsh）。
+ */
+declare function countCorpus(dshHome?: string): number;
 /** 定位一个会话的日志路径（跨工程目录查找）。 */
 declare function findSessionLog(sessionId: string, dshHome?: string): string | undefined;
 /** 扫描结果。 */
@@ -866,6 +954,13 @@ interface StewardRuntime {
     field?: string;
   } | undefined;
   log: (message: string) => void;
+  /**
+   * 体检结果缓存（进程内，随 fiber 存活）。
+   *
+   * 可选：缺省表示本次装配不启用缓存（只影响「关面板重开」是否零延迟，
+   * 不影响任何判定结果）。`apply()` 总是提供实例。
+   */
+  cache?: HealthCache;
 }
 /** 支持的路由方法（按子域分组；用于对外声明与测试断言）。 */
 declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune"];
@@ -885,4 +980,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context): void;
 //#endregion
-export { DEFAULT_CONFIG, HEALTH_METHODS, HISTORY_METHODS, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type StewardConfig, StewardRuntime, apply, buildProjectionOwnerIndex, buildSessionReport, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, discoverSessions, findSessionLog, firstLosslessViolation, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, handleMethod, inject, isLossless, listHistory, methodEnabled, prescribe, pruneArchiveFile, pruneHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readTailFacts, scanSessions, scanZstdFrames };
+export { DEFAULT_CONFIG, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, discoverSessions, findSessionLog, firstLosslessViolation, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, handleMethod, inject, isLossless, listHistory, methodEnabled, prescribe, pruneArchiveFile, pruneHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readTailFacts, scanSessions, scanZstdFrames };
