@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
     "access": "public",
@@ -77,7 +77,7 @@
   ],
   "engines": {
     "node": ">=20",
-    "dsh": ">=0.1.0-rc.6 <0.2.0-0"
+    "dsh": ">=0.1.5-rc.1 <0.2.0-0"
   },
   "license": "MIT",
   "peerDependencies": {
