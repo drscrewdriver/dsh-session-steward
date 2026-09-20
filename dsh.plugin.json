@@ -1,7 +1,7 @@
 {
   "id": "dsh-session-steward",
   "name": "dsh-session-steward",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": {
     "en": "Session Steward: browse and bulk-prune the official session archive set, and run a four-gate session health checkup that ends in a reversible, backup-first prescription. Never rewrites session logs.",
     "zh": "会话管家：浏览并批量清理官方会话归档集合，并对会话做四门体检，最终给出可逆、先备份的处方。不改写会话日志。"
