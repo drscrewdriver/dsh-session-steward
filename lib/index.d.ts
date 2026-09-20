@@ -571,6 +571,14 @@ interface SessionLogRead {
     turn: number;
     step: number;
   };
+  /**
+   * 日志首行的 header（`type: 'session'` 记录）。
+   *
+   * 取它是为了拿到 `version`（格式代次）：文件名代次与 header 代次都由宿主的
+   * 代次发布路径写入，二者一致是发布不变量。首行不是 JSON 时为 undefined，
+   * 由 `log-integrity` 门按解码问题如实报出，不在这里抛。
+   */
+  header?: Record<string, unknown>;
 }
 /** 解码后的事件（结构子集）。 */
 interface DecodedEvent {
@@ -600,7 +608,7 @@ interface OfficialDecoders {
 }
 /**
  * 读取一个会话日志文件（zip 帧扫描 + 解包 + seq 连续性）。
- * @param file - `session.jsonl.zstd` 绝对路径。
+ * @param file - 当前代日志的绝对路径（由代次解析得出，不假定具体文件名）。
  * @param bytes - 文件内容（调用方读取，便于测试注入）。
  * @param decoders - 可选官方解码器（缺省用本地等价实现）。
  * @returns 事件、统计与问题清单。
@@ -608,6 +616,96 @@ interface OfficialDecoders {
 declare function decodeSessionLogBytes(file: string, bytes: Buffer, decoders?: OfficialDecoders): SessionLogRead;
 /** 从文件读取并解码。 */
 declare function decodeSessionLogFile(file: string, decoders?: OfficialDecoders): SessionLogRead;
+//#endregion
+//#region src/host/health/generation.d.ts
+/** 日志的物理编码（对齐宿主的 `JsonlCompression`）。 */
+type LogCompression = 'zstd' | 'none';
+/** 处置优先级：`high` = 该会话的当前代是从暂存（TMP）发布出来的。 */
+type SessionPriority = 'high' | 'normal';
+/** 一份日志产物在磁盘上的事实。 */
+interface LogArtifact {
+  /** 文件名（不含目录）。 */
+  name: string;
+  /** 绝对路径。 */
+  path: string;
+  bytes: number;
+  /** mtime（epoch ms）。 */
+  mtimeMs: number;
+}
+/** 一份规范代次产物。 */
+interface GenerationArtifact extends LogArtifact {
+  /** 该文件承载的格式代次；0 为无版本号的历史代。 */
+  version: number;
+  /** 该文件的物理编码。 */
+  compression: LogCompression;
+}
+/** 一个会话目录的代次事实。 */
+interface SessionGenerations {
+  /** 目录内全部规范产物，按代次升序（同代次再按 mtime 升序）。 */
+  canonical: GenerationArtifact[];
+  /** 当前代 = 规范产物中代次最高的一份；目录内没有规范产物时为 undefined。 */
+  current?: GenerationArtifact;
+  /** 历史代（代次 0）；宿主按契约保留已提交的旧代次，不删不改。 */
+  legacy?: GenerationArtifact;
+  /** 迁移暂存残留（发布源）。 */
+  staging: LogArtifact[];
+  /** 只有历史代、尚无更高代次：宿主首次写访问才会发布，冷读要全量内存迁移。 */
+  legacyOnly: boolean;
+}
+/**
+ * 某代次的规范日志文件名。
+ * @param version - 非负安全整数的格式代次。
+ * @param compression - 物理编码（缺省 zstd）。
+ * @returns 该代次在会话目录内的文件名。
+ */
+declare function generationLogFilename(version: number, compression?: LogCompression): string;
+/**
+ * 把一个规范日志名解析回代次。
+ *
+ * 与宿主 `parseGenerationLogFilename` 同语义：非规范名（临时、大写、前导零、
+ * `.v0`、别的压缩后缀）一律返回 undefined，**不猜**。
+ * @param filename - 会话目录里的一个文件名。
+ * @param compression - 该目录使用的物理编码（缺省 zstd）。
+ * @returns 其格式代次，或名字不构成规范代次时的 undefined。
+ */
+declare function parseGenerationLogFilename(filename: string, compression?: LogCompression): number | undefined;
+/**
+ * 两种压缩编码都试一遍，判定该名字是不是某代的规范产物。
+ *
+ * 发现路径不能假设部署里的 `compression` 配置：配置在 profile 侧，插件读不到，
+ * 而日志就在磁盘上。因此按名字本身分类，编码作为结果一并带回。
+ * @param filename - 会话目录里的一个文件名。
+ * @returns 代次与编码，或该名字不是规范代次时的 undefined。
+ */
+declare function classifyGenerationFilename(filename: string): {
+  version: number;
+  compression: LogCompression;
+} | undefined;
+/**
+ * 该文件名是否是迁移暂存（当前代的发布源）。
+ * @param filename - 会话目录里的一个文件名。
+ * @returns 是否形如 `session.migration.<token>.jsonl[.zstd].tmp`。
+ */
+declare function isMigrationStagingFilename(filename: string): boolean;
+/**
+ * 读取一个会话目录的代次事实（只读，不碰任何文件内容）。
+ * @param dir - 会话目录的绝对路径。
+ * @returns 规范产物（按代次升序）、当前代、历史代与暂存残留。
+ */
+declare function readSessionGenerations(dir: string): SessionGenerations;
+/** 目录内全部已识别产物的最新 mtime。 */
+declare function latestArtifactMtime(facts: SessionGenerations): number | undefined;
+/**
+ * 该会话的处置优先级。
+ *
+ * `high` 的判据就是「从 TMP 移出来」本身：当前代次非 0（当前代是经
+ * `session.migration.*.tmp` 暂存发布出来的），或目录内仍有暂存残留。
+ * 代次 0 的历史代是宿主按契约保留的未发布会话，旧发现逻辑读的就是它 —— 这类
+ * 会话既没有发布痕迹、也没有被读错，故为 `normal`。
+ * @param facts - 会话目录的代次事实。
+ * @returns 处置优先级。
+ */
+declare function sessionPriority(facts: SessionGenerations): SessionPriority;
 //#endregion
 //#region src/host/health/gates.d.ts
 /**
@@ -636,7 +734,7 @@ interface GateAttribution {
 }
 /** 一个 gate 的结果。 */
 interface GateResult {
-  id: 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read';
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read';
   level: GateLevel;
   evidence: string;
   attribution?: GateAttribution;
@@ -646,6 +744,12 @@ interface GateResult {
 interface SessionHealthReport {
   sessionId: string;
   level: GateLevel;
+  /**
+   * 处置优先级：`high` = 该会话的当前代是从迁移暂存（TMP）发布出来的。
+   *
+   * 与 `level` 正交：优先级答「先看谁」，档位答「要不要处置」。
+   */
+  priority: SessionPriority;
   gates: GateResult[];
   generatedAt: number;
 }
@@ -658,6 +762,12 @@ interface GateContext {
   logPath?: string;
   /** 已解码的日志（复用，避免重复解码）。 */
   log?: SessionLogRead;
+  /**
+   * 会话目录的代次事实（见 `generation.ts`）。
+   *
+   * 不提供时 `generation` 门记 `skipped`（无从判定），不猜、也不当作正常。
+   */
+  generations?: SessionGenerations;
   /** 热态：宿主 `sessionProjections.checkpoint(session)` 的逐行状态。 */
   projectionState?: Record<string, unknown>;
   /** 归属查询函数（投影 key → 包名）。 */
@@ -681,6 +791,22 @@ interface TailFacts {
 }
 /** 从解码事件推导尾部事实。 */
 declare function readTailFacts(log: SessionLogRead): TailFacts;
+/**
+ * gate 0：代次事实（当前代是历史代还是已发布代、有没有暂存残留）。
+ *
+ * 存在的理由：一个会话目录里可以有多份日志产物，而**读哪一份**决定了后面所有
+ * 门的结论。早期版本固定读 `session.jsonl.zstd`，于是对已发布当前代的会话要么
+ * 读错（读历史代那份，12MB 全量回放）、要么完全发现不了。本门把这个前提显式化成
+ * 可判定的证据，档位判据只取「有据可依」的三条：
+ *   - 没有任何规范产物（只剩暂存）→ `fail`：当前代尚未发布；
+ *   - 有暂存残留 → `warn`：发布源仍在原地（发布完成未清，或尚未发布）；
+ *   - 文件名代次与 header 代次不一致 → `warn`：发布不变量被破坏。
+ * 历史代与当前代并存是宿主**契约要求**（已提交代次不删不改），故记 `ok` 并写进
+ * 证据，不抬档 —— 抬档会把 34 个完全正常的会话变成噪声。
+ * @param facts - 会话目录的代次事实；缺省表示无从判定。
+ * @param log - 已解码的日志（用于取 header.version 交叉核对）。
+ */
+declare function gateGeneration(facts: SessionGenerations | undefined, log?: SessionLogRead): GateResult;
 /** gate 1：日志完整性（可解码、seq 连续、无撕裂尾帧）。 */
 declare function gateLogIntegrity(log: SessionLogRead): GateResult;
 /** 投影缓存行的体检事实。 */
@@ -701,7 +827,7 @@ declare function gateProjectionCache(facts: ProjectionCacheFacts): GateResult;
 declare function gateLosslessJson(projectionState: Record<string, unknown> | undefined, attribute?: (projection: string) => GateAttribution | undefined): GateResult;
 /** gate 4：冷读成本与可接续性。 */
 declare function gateColdRead(facts: TailFacts): GateResult;
-/** 聚合四门结果为一份报告。 */
+/** 聚合全部 gate 结果为一份报告。 */
 declare function buildSessionReport(context: GateContext): SessionHealthReport;
 //#endregion
 //#region src/host/health/cache.d.ts
@@ -976,7 +1102,7 @@ declare function quarantineProjectionCache(sessionId: string, dshHome?: string, 
 declare function prescribe(report: SessionHealthReport, dshHome?: string): string[];
 /** 处置结果的定性分类。 */
 type RepairVerdict =
-/** 四门全绿，没有要做的事。 */
+/** 全部检查通过，没有要做的事。 */
 'nothing-to-do' |
 /** 处置生效且异常已消除。 */
 'repaired' |
@@ -1014,24 +1140,52 @@ declare function assessRepair(input: {
 }): RepairAssessment;
 //#endregion
 //#region src/host/health/scan.d.ts
-/** 一个已发现的会话日志。 */
+/** 一个已发现的会话。 */
 interface DiscoveredSession {
   sessionId: string;
-  logPath: string;
+  /** 承载日志的代次目录。 */
+  dir: string;
+  /**
+   * 当前代日志路径。
+   *
+   * 目录内只有迁移暂存（尚未发布当前代）时为 undefined —— 该会话确实存在，
+   * 但没有可读的规范产物，由 `generation` / `log-integrity` 两门如实报出，
+   * 而不是当作「没有这个会话」。
+   */
+  logPath?: string;
+  /** 代次事实（当前代 / 历史代 / 暂存残留）。 */
+  generations: SessionGenerations;
+  /** 处置优先级：`high` = 当前代是从暂存（TMP）发布出来的。 */
+  priority: SessionPriority;
   updatedAt: number;
   bytes: number;
 }
-/** 枚举全部会话日志（按 mtime 倒序），带可选上限。 */
+/**
+ * 枚举全部会话（按 mtime 倒序），带可选上限。
+ *
+ * 「是会话目录」的判据是**目录里有规范代次产物或迁移暂存**，不要求任何具体文件名。
+ * @param dshHome - DSH home（缺省 ~/.dsh）。
+ * @param limit - 返回上限（缺省 `DISCOVERY_LIMIT`）。
+ */
 declare function discoverSessions(dshHome?: string, limit?: number): DiscoveredSession[];
 /**
  * 语料总数：只做目录枚举，**不跑体检**。
  *
- * 用于判断缓存是否已过期——枚举很便宜，而重扫要解 zstd、跑四门。
+ * 用于判断缓存是否已过期——枚举很便宜，而重扫要解 zstd、跑门。
  * 正因为两者代价差着量级，「对账」才不构成缓存失效策略本身。
  * @param dshHome - DSH home（缺省 ~/.dsh）。
  */
 declare function countCorpus(dshHome?: string): number;
-/** 定位一个会话的日志路径（跨工程目录查找）。 */
+/** 按 id 定位一个会话（跨工程目录查找）。 */
+declare function findSession(sessionId: string, dshHome?: string): DiscoveredSession | undefined;
+/**
+ * 定位一个会话的**当前代**日志路径（跨工程目录查找）。
+ *
+ * 返回 undefined 有两种含义，调用方必须区分：会话不存在，或会话存在但尚未发布
+ * 当前代（只有迁移暂存）。需要区分时用 `findSession`。
+ * @param sessionId - 会话 id。
+ * @param dshHome - DSH home（缺省 ~/.dsh）。
+ */
 declare function findSessionLog(sessionId: string, dshHome?: string): string | undefined;
 /** 扫描结果。 */
 interface HealthScanResult {
@@ -1056,6 +1210,9 @@ interface HealthScanResult {
  * 语料先整体列出（按 mtime 倒序，≤ DISCOVERY_LIMIT），再按 `[offset, offset+limit)`
  * 切片扫描。这样客户端可以用小批次连续调用、自己累计真实进度，而宿主保持无状态
  * ——不必把同步循环改成异步，也不必新增进度轮询端点。
+ *
+ * 批内**命中顺序**按处置优先级排（`high` 在前，稳定排序）。分批切片仍按 mtime，
+ * 所以 offset/total 的算术不受影响：只有同一批里的呈现顺序变了。
  * @param options - dshHome / 批大小 / 批起点 / 是否只返回非 ok / 归属查询 / 热态状态提供者。
  */
 declare function scanSessions(options: {
@@ -1114,4 +1271,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context): void;
 //#endregion
-export { DEFAULT_CONFIG, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSessionLog, firstLosslessViolation, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, handleMethod, indexSessionDirs, inject, isLossless, isSafeChild, listHistory, locateSessionUsage, methodEnabled, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readTailFacts, scanSessions, scanZstdFrames, sessionsRootFor };
+export { DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };

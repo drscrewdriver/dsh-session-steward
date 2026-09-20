@@ -1,5 +1,5 @@
 /**
- * 体检面板：体检（四门）→ 处方（命令清单）→ 出院（可逆处置 + before/after 对照）。
+ * 体检面板：体检（五门）→ 处方（命令清单）→ 出院（可逆处置 + before/after 对照）。
  *
  * 三态流转完全由 host 侧报告驱动，客户端只做展示与触发；重型动作都在 host，
  * 渲染周期内不发同步重活。
@@ -19,6 +19,7 @@ import { translate, type LocaleKey } from './locales.ts'
 export type PanelTranslate = (key: LocaleKey, params?: Record<string, unknown>) => string
 
 const GATE_LABEL: Record<HealthGate['id'], LocaleKey> = {
+  'generation': 'health.gate.generation',
   'log-integrity': 'health.gate.log-integrity',
   'projection-cache': 'health.gate.projection-cache',
   'lossless-json': 'health.gate.lossless-json',
@@ -315,6 +316,9 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
           .join(' · ')
         return createElement('li', { key: item.sessionId, className: 'dss_row' }, [
           createElement('span', { key: 'lv', className: `dss_levelPill dss_level_${item.level}` }, translate(t, LEVEL_LABEL[item.level])),
+          // 优先级徽标：这些会话的当前代是从迁移暂存（TMP）发布出来的，即本插件
+          // 此前读错产物或完全发现不了的那批。列表按优先级排，再标一次让排序可解释。
+          item.priority === 'high' && createElement('span', { key: 'p', className: 'dss_meta' }, translate(t, 'health.priority.high')),
           createElement('span', { key: 'id', className: 'dss_meta dss_uuid' }, item.sessionId),
           reasons !== '' && createElement('span', { key: 'why', className: 'dss_why' }, reasons),
           createElement('button', {

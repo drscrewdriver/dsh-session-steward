@@ -98,7 +98,7 @@ export interface HistoryPurgeResponse {
 
 /** 一个 gate 的结果（与 host 侧 GateResult 对齐）。 */
 export interface HealthGate {
-  id: 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
   level: 'ok' | 'warn' | 'fail' | 'skipped'
   evidence: string
   attribution?: { projection?: string; package?: string; field?: string }
@@ -110,6 +110,11 @@ export interface HealthReport {
   sessionId: string
   /** 总判：聚合时 `skipped` 不抬升（见 host 侧 buildSessionReport）。 */
   level: 'ok' | 'warn' | 'fail'
+  /**
+   * 处置优先级（见 host 侧 generation.ts）：`high` = 当前代是从迁移暂存（TMP）发布出来的。
+   * 与 `level` 正交：优先级答「先看谁」，档位答「要不要处置」。
+   */
+  priority?: 'high' | 'normal'
   gates: HealthGate[]
   generatedAt: number
 }

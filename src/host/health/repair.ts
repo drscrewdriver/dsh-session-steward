@@ -96,6 +96,20 @@ export function prescribe(report: SessionHealthReport, dshHome?: string): string
   const gate = (id: SessionHealthReport['gates'][number]['id']): SessionHealthReport['gates'][number] | undefined =>
     report.gates.find(entry => entry.id === id)
 
+  const generation = gate('generation')
+  if (generation?.level === 'fail' || generation?.level === 'warn') {
+    lines.push(`# 代次异常：${generation.evidence}`)
+    // 处方文本只讲判据，不写死具体代次：当前代由目录实测得出（detail.currentVersion）。
+    // 写死 `v3` 正是本插件此前「版本适配落后」的形态。
+    const currentVersion = generation.detail?.['currentVersion']
+    lines.push(typeof currentVersion === 'number'
+      ? `# 当前代 v${currentVersion}：本插件不改会话日志，暂存残留的发布/隔离需用会话代次工具处理`
+      : '# 目录内只有迁移暂存、还没有规范产物：需先用会话代次工具发布当前代，或重启宿主触发发布')
+    if (report.priority === 'high') {
+      lines.push('# 该会话优先级为 high（当前代由暂存发布而来），建议先处置它')
+    }
+  }
+
   const lossless = gate('lossless-json')
   if (lossless?.level === 'fail') {
     const pkg = lossless.attribution?.package ?? 'unknown'
@@ -132,7 +146,7 @@ export function prescribe(report: SessionHealthReport, dshHome?: string): string
     // 「无从判定」不是「全绿」：把 skipped 的门如实列出，避免用户以为都检查过了。
     const unjudged = report.gates.filter(entry => entry.level === 'skipped')
     lines.push(unjudged.length === 0
-      ? '# 四门全绿：无需处置'
+      ? '# 全部检查通过：无需处置'
       : `# 无可处置项（${unjudged.length} 门无从判定，非异常）：${unjudged.map(entry => entry.id).join(' / ')}`)
   }
   return lines
@@ -145,7 +159,7 @@ export function describeHome(dshHome?: string): string {
 
 /** 处置结果的定性分类。 */
 export type RepairVerdict =
-  /** 四门全绿，没有要做的事。 */
+  /** 全部检查通过，没有要做的事。 */
   | 'nothing-to-do'
   /** 处置生效且异常已消除。 */
   | 'repaired'
@@ -163,6 +177,15 @@ export interface RepairAssessment {
   explanation: string
   /** 处置后仍未解决的门（可处置档位）。 */
   residual: { id: string; level: GateLevel }[]
+}
+
+/** 残留门的可读归因：区分「本插件有能力处置」与「按红线只能等 / 交给别的工具」。 */
+function residualNote(residual: { id: string }[]): string {
+  if (residual.some(entry => entry.id === 'generation')) {
+    return '其中 generation 来自会话目录的代次产物（暂存残留或当前代尚未发布），' +
+      '本插件不改会话日志，需用会话代次工具处置。'
+  }
+  return '这类异常来自会话日志或宿主运行态，本插件不改会话日志，请等待宿主结算后重新体检。'
 }
 
 /**
@@ -187,7 +210,7 @@ export function assessRepair(input: {
   const residualIds = residual.map(entry => entry.id).join(' / ')
 
   if (before.level === 'ok') {
-    return { verdict: 'nothing-to-do', explanation: '四门全绿，无需处置', residual: [] }
+    return { verdict: 'nothing-to-do', explanation: '全部检查通过，无需处置', residual: [] }
   }
 
   if (repair.ok) {
@@ -195,8 +218,7 @@ export function assessRepair(input: {
       ? { verdict: 'repaired', explanation: '处置生效：已隔离投影缓存记录，体检结果已恢复', residual: [] }
       : {
           verdict: 'repaired-with-residual',
-          explanation: `已隔离投影缓存记录；但仍有与该缓存无关的异常：${residualIds}。` +
-            '这类异常来自会话日志或宿主运行态，本插件不改会话日志，请等待宿主结算后重新体检。',
+          explanation: `已隔离投影缓存记录；但仍有与该缓存无关的异常：${residualIds}。${residualNote(residual)}`,
           residual,
         }
   }
@@ -208,8 +230,7 @@ export function assessRepair(input: {
       verdict: 'not-applicable',
       explanation: residualIds === ''
         ? '当前异常无可逆处置项'
-        : `当前异常无可逆处置项（投影缓存无可隔离记录）；异常来自 ${residualIds}，` +
-          '本插件不改会话日志，请等待宿主结算后重新体检。',
+        : `当前异常无可逆处置项（投影缓存无可隔离记录）；异常来自 ${residualIds}，${residualNote(residual)}`,
       residual,
     }
   }

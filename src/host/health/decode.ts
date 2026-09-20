@@ -36,6 +36,14 @@ export interface SessionLogRead {
   decoder: 'official' | 'local'
   /** 尾部是否仍有未收尾的 open step。 */
   openStep?: { turn: number; step: number }
+  /**
+   * 日志首行的 header（`type: 'session'` 记录）。
+   *
+   * 取它是为了拿到 `version`（格式代次）：文件名代次与 header 代次都由宿主的
+   * 代次发布路径写入，二者一致是发布不变量。首行不是 JSON 时为 undefined，
+   * 由 `log-integrity` 门按解码问题如实报出，不在这里抛。
+   */
+  header?: Record<string, unknown>
 }
 
 /** 解码后的事件（结构子集）。 */
@@ -209,7 +217,7 @@ export function decodeRecordLocal(value: unknown): DecodedEvent[] {
 
 /**
  * 读取一个会话日志文件（zip 帧扫描 + 解包 + seq 连续性）。
- * @param file - `session.jsonl.zstd` 绝对路径。
+ * @param file - 当前代日志的绝对路径（由代次解析得出，不假定具体文件名）。
  * @param bytes - 文件内容（调用方读取，便于测试注入）。
  * @param decoders - 可选官方解码器（缺省用本地等价实现）。
  * @returns 事件、统计与问题清单。
@@ -276,6 +284,15 @@ export function decodeSessionLogBytes(
     if (gapped) break
   }
   const openStep = findOpenStep(events)
+  // 首行是 header，不参与事件序列（下面的事件循环从 index 1 起）。
+  let header: Record<string, unknown> | undefined
+  const headerLine = lines[0]
+  if (headerLine !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(headerLine)
+      if (typeof parsed === 'object' && parsed !== null) header = parsed as Record<string, unknown>
+    } catch { /* 首行不是 JSON：header 不可读，由 log-integrity 门报出 */ }
+  }
   return {
     events,
     frames: frames.length,
@@ -284,6 +301,7 @@ export function decodeSessionLogBytes(
     issues,
     decoder: decoders === undefined ? 'local' : 'official',
     ...(openStep === undefined ? {} : { openStep }),
+    ...(header === undefined ? {} : { header }),
   }
 }
 

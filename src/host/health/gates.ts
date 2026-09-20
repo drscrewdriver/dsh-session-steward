@@ -1,5 +1,5 @@
 /**
- * 四个体检 gate（每个可独立测试）与报告聚合。
+ * 五个体检 gate（每个可独立测试）与报告聚合。
  *
  * 统一输出形状：`{ id, level, evidence, attribution, detail }`；
  * 聚合结果 `SessionHealthReport` 供「体检 → 处方 → 出院」三步流程使用。
@@ -10,6 +10,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { decodeSessionLogFile, type SessionLogRead } from './decode.ts'
+import {
+  sessionPriority,
+  type SessionGenerations,
+  type SessionPriority,
+} from './generation.ts'
 import { firstLosslessViolation, type LosslessViolation } from './lossless.ts'
 
 /**
@@ -40,7 +45,7 @@ export interface GateAttribution {
 
 /** 一个 gate 的结果。 */
 export interface GateResult {
-  id: 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
   level: GateLevel
   evidence: string
   attribution?: GateAttribution
@@ -51,6 +56,12 @@ export interface GateResult {
 export interface SessionHealthReport {
   sessionId: string
   level: GateLevel
+  /**
+   * 处置优先级：`high` = 该会话的当前代是从迁移暂存（TMP）发布出来的。
+   *
+   * 与 `level` 正交：优先级答「先看谁」，档位答「要不要处置」。
+   */
+  priority: SessionPriority
   gates: GateResult[]
   generatedAt: number
 }
@@ -64,6 +75,12 @@ export interface GateContext {
   logPath?: string
   /** 已解码的日志（复用，避免重复解码）。 */
   log?: SessionLogRead
+  /**
+   * 会话目录的代次事实（见 `generation.ts`）。
+   *
+   * 不提供时 `generation` 门记 `skipped`（无从判定），不猜、也不当作正常。
+   */
+  generations?: SessionGenerations
   /** 热态：宿主 `sessionProjections.checkpoint(session)` 的逐行状态。 */
   projectionState?: Record<string, unknown>
   /** 归属查询函数（投影 key → 包名）。 */
@@ -111,6 +128,73 @@ export function readTailFacts(log: SessionLogRead): TailFacts {
     ...(lastTurnEnd === undefined ? {} : { lastTurnEnd }),
     ...(log.openStep === undefined ? {} : { openStep: log.openStep }),
     assistantAfterLastUser,
+  }
+}
+
+/**
+ * gate 0：代次事实（当前代是历史代还是已发布代、有没有暂存残留）。
+ *
+ * 存在的理由：一个会话目录里可以有多份日志产物，而**读哪一份**决定了后面所有
+ * 门的结论。早期版本固定读 `session.jsonl.zstd`，于是对已发布当前代的会话要么
+ * 读错（读历史代那份，12MB 全量回放）、要么完全发现不了。本门把这个前提显式化成
+ * 可判定的证据，档位判据只取「有据可依」的三条：
+ *   - 没有任何规范产物（只剩暂存）→ `fail`：当前代尚未发布；
+ *   - 有暂存残留 → `warn`：发布源仍在原地（发布完成未清，或尚未发布）；
+ *   - 文件名代次与 header 代次不一致 → `warn`：发布不变量被破坏。
+ * 历史代与当前代并存是宿主**契约要求**（已提交代次不删不改），故记 `ok` 并写进
+ * 证据，不抬档 —— 抬档会把 34 个完全正常的会话变成噪声。
+ * @param facts - 会话目录的代次事实；缺省表示无从判定。
+ * @param log - 已解码的日志（用于取 header.version 交叉核对）。
+ */
+export function gateGeneration(facts: SessionGenerations | undefined, log?: SessionLogRead): GateResult {
+  if (facts === undefined) {
+    return { id: 'generation', level: 'skipped', evidence: '未提供代次事实，本门无从判定' }
+  }
+  const current = facts.current
+  const headerVersion = typeof log?.header?.['version'] === 'number' ? log.header['version'] as number : undefined
+  const detail = {
+    currentVersion: current?.version,
+    currentName: current?.name,
+    currentCompression: current?.compression,
+    canonicalVersions: facts.canonical.map(artifact => artifact.version),
+    staging: facts.staging.map(artifact => artifact.name),
+    legacyOnly: facts.legacyOnly,
+    priority: sessionPriority(facts),
+    ...(headerVersion === undefined ? {} : { headerVersion }),
+  }
+  if (current === undefined) {
+    return {
+      id: 'generation',
+      level: 'fail',
+      evidence: `目录内没有任何规范代次产物，仅剩 ${facts.staging.length} 份迁移暂存：当前代尚未从暂存发布`,
+      detail,
+    }
+  }
+  if (facts.staging.length > 0) {
+    return {
+      id: 'generation',
+      level: 'warn',
+      evidence: `当前代 v${current.version}（${current.name}）旁留有 ${facts.staging.length} 份迁移暂存残留：` +
+        facts.staging.map(artifact => artifact.name).join('、'),
+      detail,
+    }
+  }
+  if (headerVersion !== undefined && headerVersion !== current.version) {
+    return {
+      id: 'generation',
+      level: 'warn',
+      evidence: `文件名代次与日志头代次不一致：${current.name} 名为 v${current.version}，header.version=${headerVersion}`,
+      detail,
+    }
+  }
+  const note = facts.legacyOnly
+    ? '；目录内只有历史代，宿主首次写访问时才发布当前代'
+    : facts.legacy === undefined ? '' : '；历史代 v0 按契约保留未删'
+  return {
+    id: 'generation',
+    level: 'ok',
+    evidence: `当前代 v${current.version}（${current.name}）${note}`,
+    detail,
   }
 }
 
@@ -302,12 +386,14 @@ export function gateColdRead(facts: TailFacts): GateResult {
   return { id: 'cold-read', level: 'ok', evidence: `最后一轮 completed 结束，会话可原地接续（末 seq ${facts.lastSeq}）`, detail }
 }
 
-/** 聚合四门结果为一份报告。 */
+/** 聚合全部 gate 结果为一份报告。 */
 export function buildSessionReport(context: GateContext): SessionHealthReport {
   const log = context.log ?? (context.logPath === undefined
     ? undefined
     : decodeSessionLogFile(context.logPath))
   const gates: GateResult[] = []
+  // 代次门恒在首位：它断言的是「读的是哪一份产物」，是后面所有门的前提。
+  gates.push(gateGeneration(context.generations, log))
   if (log === undefined) {
     gates.push({ id: 'log-integrity', level: 'fail', evidence: '未提供日志读取结果或日志路径' })
   } else {
@@ -325,6 +411,8 @@ export function buildSessionReport(context: GateContext): SessionHealthReport {
   return {
     sessionId: context.sessionId,
     level,
+    // 没有代次事实就不主张优先级：优先级是「先看谁」的排序主张，无据时按普通处理。
+    priority: context.generations === undefined ? 'normal' : sessionPriority(context.generations),
     gates,
     generatedAt: (context.now ?? Date.now)(),
   }

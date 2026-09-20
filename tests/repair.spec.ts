@@ -13,16 +13,18 @@ import type { GateLevel, SessionHealthReport } from '../src/host/health/gates.ts
 
 type GateId = SessionHealthReport['gates'][number]['id']
 
-/** 造一份四门报告：未指定的门默认 ok。 */
+/** 造一份五门报告：未指定的门默认 ok。 */
 function makeReport(
   level: GateLevel,
   gates: Partial<Record<GateId, GateLevel>>,
   evidence: Partial<Record<GateId, string>> = {},
+  priority: SessionHealthReport['priority'] = 'normal',
 ): SessionHealthReport {
-  const ids: GateId[] = ['log-integrity', 'projection-cache', 'lossless-json', 'cold-read']
+  const ids: GateId[] = ['generation', 'log-integrity', 'projection-cache', 'lossless-json', 'cold-read']
   return {
     sessionId: 'session-test',
     level,
+    priority,
     generatedAt: 1,
     gates: ids.map(id => ({
       id,
@@ -63,8 +65,8 @@ describe('处方：只对「有观测依据」的档位开方', () => {
     expect(lines.join('\n')).toContain('投影缓存异常')
   })
 
-  it('四门全 ok → 提示全绿', () => {
-    expect(prescribe(makeReport('ok', {}))).toEqual(['# 四门全绿：无需处置'])
+  it('全部检查通过 → 提示全绿', () => {
+    expect(prescribe(makeReport('ok', {}))).toEqual(['# 全部检查通过：无需处置'])
   })
 
   it('有 skipped 但无异常 → 说「无可处置项」，不说「全绿」', () => {
@@ -72,7 +74,7 @@ describe('处方：只对「有观测依据」的档位开方', () => {
     const lines = prescribe(makeReport('ok', { 'lossless-json': 'skipped', 'projection-cache': 'skipped' }))
     const text = lines.join('\n')
     expect(text).toContain('无可处置项')
-    expect(text).not.toContain('四门全绿')
+    expect(text).not.toContain('全部检查通过')
     expect(text).toContain('lossless-json')
   })
 
@@ -147,5 +149,52 @@ describe('处置定性', () => {
     })
     expect(result.verdict).toBe('repaired')
     expect(result.residual).toEqual([])
+  })
+
+  it('残留含 generation → 归因指向代次工具，而不是「等宿主结算」', () => {
+    const result = assessRepair({
+      before: makeReport('warn', { 'projection-cache': 'warn', generation: 'warn' }),
+      after: makeReport('warn', { generation: 'warn' }),
+      repair: makeOutcome(true),
+    })
+    expect(result.verdict).toBe('repaired-with-residual')
+    expect(result.explanation).toContain('generation')
+    expect(result.explanation).toContain('代次')
+  })
+})
+
+describe('处方：代次异常', () => {
+  /** 造一份带代次门 detail 的报告。 */
+  function withGeneration(
+    level: GateLevel,
+    priority: SessionHealthReport['priority'],
+    detail: Record<string, unknown>,
+  ): SessionHealthReport {
+    const report = makeReport(level, { generation: level }, {}, priority)
+    report.gates = report.gates.map(gate => (gate.id === 'generation' ? { ...gate, detail } : gate))
+    return report
+  }
+
+  it('当前代由暂存发布 → 按 detail 里的代次开方，不写死 v3', () => {
+    // 回归：宿主把当前代升到 v4 后，写死 v3 的处方文本会说错。
+    const text = prescribe(withGeneration('warn', 'high', { currentVersion: 4 })).join('\n')
+    expect(text).toContain('代次异常')
+    expect(text).toContain('当前代 v4')
+    expect(text).toContain('high')
+    expect(text).not.toContain('v3')
+  })
+
+  it('只有迁移暂存、当前代尚未发布 → 指向「先发布」而不是「等宿主结算」', () => {
+    const text = prescribe(withGeneration('fail', 'high', {})).join('\n')
+    expect(text).toContain('代次异常')
+    expect(text).toContain('发布当前代')
+  })
+
+  it('代次门 fail 不会被当成「全部检查通过」', () => {
+    expect(prescribe(withGeneration('fail', 'high', {})).join('\n')).not.toContain('全部检查通过')
+  })
+
+  it('代次门 ok 时不开方', () => {
+    expect(prescribe(makeReport('ok', { generation: 'ok' }))).toEqual(['# 全部检查通过：无需处置'])
   })
 })

@@ -179,7 +179,7 @@ describe('报告聚合', () => {
     // 未加载的会话既无热态投影、也无投影缓存记录 → 两门 skipped。
     // 修复前这两门记 warn，导致**所有**未加载会话恒为「注意」，信号淹没。
     const report = buildSessionReport({ sessionId: 's1', log: healthyLog(), now: () => 42 })
-    expect(report.gates).toHaveLength(4)
+    expect(report.gates).toHaveLength(5)
     expect(report.gates.filter(gate => gate.level === 'skipped').length).toBeGreaterThan(0)
     expect(report.gates.some(gate => gate.level === 'warn')).toBe(false)
     expect(report.level).toBe('ok')
@@ -196,6 +196,14 @@ describe('报告聚合', () => {
   it('缺日志路径且缺解码结果 → fail', () => {
     const report = buildSessionReport({ sessionId: 's2', now: () => 1 })
     expect(report.level).toBe('fail')
-    expect(report.gates[0]?.id).toBe('log-integrity')
+    // 代次门恒在首位：它断言的是「读的是哪一份产物」，是后面所有门的前提。
+    expect(report.gates[0]?.id).toBe('generation')
+    expect(report.gates[1]?.id).toBe('log-integrity')
+  })
+
+  it('未提供代次事实 → 代次门 skipped、优先级 normal（无据不主张）', () => {
+    const report = buildSessionReport({ sessionId: 's3', log: healthyLog() })
+    expect(report.gates.find(gate => gate.id === 'generation')?.level).toBe('skipped')
+    expect(report.priority).toBe('normal')
   })
 })

@@ -20,7 +20,7 @@ const SESSION_COUNT = 12
 
 /** 造一个最小报告（只有单测关心的字段）。 */
 function report(sessionId: string, level: SessionHealthReport['level']): SessionHealthReport {
-  return { sessionId, level, gates: [], generatedAt: 1_700_000_000_000 }
+  return { sessionId, level, priority: 'normal', gates: [], generatedAt: 1_700_000_000_000 }
 }
 
 /** 造 N 个会话目录：只要有 `session.jsonl.zstd` 就会被 discover 到。 */

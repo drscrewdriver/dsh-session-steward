@@ -27,19 +27,36 @@ import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules 
 import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
 import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
-import { countCorpus, findSessionLog, scanSessions } from './host/health/scan.ts'
+import { countCorpus, findSession, scanSessions } from './host/health/scan.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
 export type { StewardConfig } from './config.ts'
 export { readArchiveSet, pruneArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
 export { listHistory, pruneHistory } from './host/history/archive.ts'
 export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor } from './host/history/purge.ts'
-export { buildSessionReport, gateColdRead, gateLogIntegrity, gateLosslessJson, gateProjectionCache, readProjectionCache, readTailFacts } from './host/health/gates.ts'
+export { buildSessionReport, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, readProjectionCache, readTailFacts } from './host/health/gates.ts'
 export { firstLosslessViolation, isLossless } from './host/health/lossless.ts'
 export { decodeSessionLogBytes, decodeSessionLogFile, scanZstdFrames } from './host/health/decode.ts'
+export {
+  classifyGenerationFilename,
+  generationLogFilename,
+  isMigrationStagingFilename,
+  latestArtifactMtime,
+  parseGenerationLogFilename,
+  readSessionGenerations,
+  sessionPriority,
+} from './host/health/generation.ts'
+export type {
+  GenerationArtifact,
+  LogArtifact,
+  LogCompression,
+  SessionGenerations,
+  SessionPriority,
+} from './host/health/generation.ts'
 export { buildProjectionOwnerIndex, createAttributor } from './host/health/attribution.ts'
 export { prescribe, quarantineProjectionCache } from './host/health/repair.ts'
-export { countCorpus, discoverSessions, findSessionLog, scanSessions } from './host/health/scan.ts'
+export { countCorpus, discoverSessions, findSession, findSessionLog, scanSessions } from './host/health/scan.ts'
+export type { DiscoveredSession } from './host/health/scan.ts'
 export { HealthCache } from './host/health/cache.ts'
 export type { HealthCacheEntry } from './host/health/cache.ts'
 export { assessRepair } from './host/health/repair.ts'
@@ -335,14 +352,17 @@ export async function handleMethod(
   const request = (payload ?? {}) as { sessionId?: unknown }
   const sessionId = asSessionId(request.sessionId)
   if (sessionId === undefined) return { ok: false, error: '缺少合法的 sessionId' }
-  const logPath = findSessionLog(sessionId, runtime.dshHome)
-  if (logPath === undefined) return { ok: false, error: `未找到会话日志：${sessionId}` }
+  // 按代次定位：会话存在但尚未发布当前代时 logPath 为 undefined，此时仍要出报告
+  // （generation / log-integrity 两门如实报出），不能笼统回「未找到会话日志」。
+  const session = findSession(sessionId, runtime.dshHome)
+  if (session === undefined) return { ok: false, error: `未找到会话日志：${sessionId}` }
 
   const projectionState = runtime.projectionStateFor(sessionId)
   const reportFor = (): SessionHealthReport => buildSessionReport({
     sessionId,
     dshHome: runtime.dshHome,
-    logPath,
+    ...(session.logPath === undefined ? {} : { logPath: session.logPath }),
+    generations: session.generations,
     ...(projectionState === undefined ? {} : { projectionState }),
     attribute: runtime.attribute,
   })
@@ -371,7 +391,7 @@ export async function handleMethod(
       verdict: clean.verdict,
       explanation: clean.explanation,
       residual: clean.residual,
-      prescriptions: ['# 四门全绿：无需处置'],
+      prescriptions: ['# 全部检查通过：无需处置'],
     }
   }
   const repair = quarantineProjectionCache(sessionId, runtime.dshHome)
