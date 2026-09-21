@@ -10,6 +10,20 @@ A DSH web plugin for **session history files** and **session health checks**. It
 > Naming boundary: **this package ships no search or index features**. Search/indexing belongs to
 > `dsh-search-index`; neither side mentions or re-interprets the other's fields.
 
+## Screenshots
+
+A **Session Steward** entry sits next to Search and Settings at the bottom of the sidebar:
+
+![Sidebar entry](assets/left-sidebar.png)
+
+**Retirement Home (history files)** — the official archive set, each row carrying its size and whether the on-disk entity still exists; select rows to un-archive or purge:
+
+![Retirement Home](assets/archive.png)
+
+**Checkup** — the entry point of the four-gate checkup, which ends in a reversible prescription:
+
+![Checkup](assets/doctor.png)
+
 ## Install
 
 ```bash
