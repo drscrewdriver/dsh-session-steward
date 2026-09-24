@@ -2,8 +2,8 @@
  * 会话管家客户端半身：样式、字典、侧边栏入口（dsh-session-steward）与设置卡。
  *
  * 侧边栏入口点击后打开「养老院 / 体检」双页签对话框；两个页签的可见性由配置开关决定，
- * 关掉的子域不渲染页签，也不留空壳。开关读取走 settingsScope 的订阅快照，
- * 写通道只有设置卡（显式控件）。
+ * 关掉的子域不渲染页签，也不留空壳。开关读取走 configForms（0.1.7，entry id 键）/
+ * 旧宿主设置服务的订阅快照；配置写入由 volatile 字段自动生成的设置表单承担。
  */
 import type { Context } from 'cordis'
 import { createElement, useState, useSyncExternalStore, type ReactElement } from 'react'
@@ -13,7 +13,7 @@ import {
   STEWARD_SETTINGS_NAMESPACE,
   type StewardConfig,
 } from '../config.ts'
-import { StewardSettingsCard, type StewardCardScope } from './card.tsx'
+import { StewardCardScope } from './card.tsx'
 import { en, translate, zh, type LocaleKey } from './locales.ts'
 import { StewardFooter, StewardPanel, TAB_HEALTH, TAB_HISTORY } from './panel.tsx'
 
@@ -34,9 +34,14 @@ interface StewardLocaleService {
   register(ns: string, dictionaries: { zh: unknown; en: unknown }): () => void
 }
 
-/** settingsScope 服务面。 */
+/** 旧宿主设置服务面（0.1.7 前的回退路径，结构化镜像）。 */
 interface StewardSettingsScope {
   bind<U>(input: { namespace: string }): (StewardCardScope & { getSnapshot(): { value: U | undefined } }) | undefined
+}
+
+/** configForms 服务面（0.1.7：以 profile entry id 取句柄）。 */
+interface StewardConfigForms {
+  get<U>(entryId: string): StewardCardScope & { getSnapshot(): { value: U | undefined } }
 }
 
 /** 客户端插件声明的注入面。 */
@@ -149,7 +154,7 @@ function injectStyles(): () => void {
 
 /**
  * 客户端插件主体。
- * @param ctx - 客户端上下文（slots、可选 locale / settingsScope）。
+ * @param ctx - 客户端上下文（slots、可选 locale / configForms）。
  */
 export function apply(ctx: Context): void {
   ctx.effect(() => injectStyles(), 'dsh-session-steward: stylesheet')
@@ -159,8 +164,11 @@ export function apply(ctx: Context): void {
     ctx.effect(() => locale.register(NS, { zh, en }), 'dsh-session-steward: dictionaries')
   }
 
-  const settingsScope = ctx.get('settingsScope') as StewardSettingsScope | undefined
-  const bound = settingsScope?.bind<StewardConfig>({ namespace: STEWARD_SETTINGS_NAMESPACE })
+  // 0.1.7：configForms 以 entry id 取句柄；旧宿主回退到按命名空间绑定。
+  const configForms = ctx.get('configForms') as StewardConfigForms | undefined
+  const legacySettings = ctx.get('settingsScope') as StewardSettingsScope | undefined
+  const bound = configForms?.get<StewardConfig>(STEWARD_ENTRY_ID)
+    ?? legacySettings?.bind<StewardConfig>({ namespace: STEWARD_SETTINGS_NAMESPACE })
 
   const slots = ctx.get('slots') as StewardSlotsService | undefined
   if (slots === undefined) return
@@ -171,24 +179,8 @@ export function apply(ctx: Context): void {
     (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound }),
   ), 'dsh-session-steward: sidebar footer entry')
 
-  slots.inject('settings.plugin.item', () => slots.register({
-    name: 'settings.plugin.item',
-    id: STEWARD_SETTINGS_NAMESPACE,
-    key: STEWARD_SETTINGS_NAMESPACE,
-    locale: locale !== undefined ? NS : undefined,
-    inject: () => ({
-      scope: bound ?? {
-        getSnapshot: () => ({
-          status: 'ready' as const,
-          value: DEFAULT_CONFIG,
-          revision: undefined,
-          writable: false,
-        }),
-        subscribe: () => () => {},
-        set: async () => {},
-      },
-    }),
-  }, StewardSettingsCard), 'dsh-session-steward: plugin settings card')
+  // 0.1.7：旧的插件设置卡席位已删除 —— 配置表单由 volatile 字段自动生成，
+  // 不再注册任何设置卡。
 }
 
 /** 入口按钮：持有面板开关；两个页签的可见性来自配置快照。 */

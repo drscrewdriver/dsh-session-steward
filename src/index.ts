@@ -79,50 +79,25 @@ interface StewardWebRuntime {
   trustedHosts: readonly string[]
 }
 
-/** settings 服务面（结构化镜像）。 */
-interface SettingsScopeLike {
-  get(): unknown
-  watch(callback: () => void): () => void
-}
-interface SettingsServiceLike {
-  register(ns: string, schema: unknown, options?: { base?: unknown }): SettingsScopeLike
-}
-interface SettingsAwareCtx {
-  inject(deps: readonly string[], fn: (sctx: {
-    settings: SettingsServiceLike
-    effect(cleanup: () => (() => void) | void, label?: string): void
-  }) => void): void
+/** Live reference the 0.1.7 loader hands `apply` for `.volatile()` config fields. */
+interface VolatileRef<T> {
+  get(): T
 }
 
-/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。 */
-const Config = z.object({
-  enabled: z.boolean().default(true),
-  historyFiles: z.boolean().default(true),
-  healthCheck: z.boolean().default(true),
+/** Resolve one possibly-volatile field: a live ref on 0.1.7+, a plain value otherwise. */
+function readVolatileValue<T>(value: T | VolatileRef<T> | undefined): T | undefined {
+  if (value !== null && typeof value === 'object' && typeof (value as VolatileRef<T>).get === 'function') {
+    return (value as VolatileRef<T>).get()
+  }
+  return value as T | undefined
+}
+
+/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7：volatile 字段即设置表单。 */
+export const Config = z.object({
+  enabled: z.boolean().default(true).volatile(),
+  historyFiles: z.boolean().default(true).volatile(),
+  healthCheck: z.boolean().default(true).volatile(),
 })
-
-/**
- * 官方 `installSettingsSection` 的内联等价：通过 settings 服务注册命名空间、
- * 以组合入口作为 `base` 层、并保持运行时来源实时（与 toggle / thinking-levels 同范式）。
- */
-function installSettingsSection<T>(
-  ctx: Context,
-  ns: string,
-  schema: unknown,
-  entry: T,
-  hooks: { setSource: (source: () => T) => void; onChange: () => void },
-): void {
-  ;(ctx as unknown as SettingsAwareCtx).inject(['settings'], (sctx) => {
-    const scope = sctx.settings.register(ns, schema, { base: entry })
-    hooks.setSource(() => scope.get() as T)
-    hooks.onChange()
-    sctx.effect(() => () => {
-      hooks.setSource(() => entry)
-      hooks.onChange()
-    })
-    scope.watch(() => hooks.onChange())
-  })
-}
 
 /** 单次请求体的上限（防御无界读取）。 */
 const MAX_BODY_BYTES = 16 << 20
@@ -418,14 +393,17 @@ export async function handleMethod(
 }
 
 /**
- * 插件主体：注册设置命名空间、装配运行时、挂载 fenced 路由。
- * @param ctx - host 插件上下文（webServer / webRuntime / 可选 settings、sessionQuery、sessions、sessionProjections）。
+ * 插件主体：装配运行时、挂载 fenced 路由。
+ * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、sessions、sessionProjections）。
+ * @param config - 组合条目（0.1.7：`.volatile()` 字段为 live ref）。
  */
-export function apply(ctx: Context): void {
-  let current: () => Required<StewardConfig> = () => DEFAULT_CONFIG
-  installSettingsSection(ctx, STEWARD_SETTINGS_NAMESPACE, Config, DEFAULT_CONFIG, {
-    setSource: (source) => { current = () => ({ ...DEFAULT_CONFIG, ...(source() as Partial<StewardConfig>) }) },
-    onChange: () => {},
+export function apply(ctx: Context, config: Partial<StewardConfig> = {}): void {
+  // 0.1.7：volatile 字段每次读取解引出最新快照（开关即时生效），不再有任何
+  // settings 注册调用。
+  const current = (): Required<StewardConfig> => ({
+    enabled: readVolatileValue(config.enabled) ?? DEFAULT_CONFIG.enabled,
+    historyFiles: readVolatileValue(config.historyFiles) ?? DEFAULT_CONFIG.historyFiles,
+    healthCheck: readVolatileValue(config.healthCheck) ?? DEFAULT_CONFIG.healthCheck,
   })
 
   const log = (message: string): void => {

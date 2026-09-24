@@ -1,10 +1,8 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public",
-    "tag": "dsh-0.1.5"
+    "tag": "dsh-0.1.7"
   },
   "description": "DSH Web 插件（DSH 0.1.5 专线）：会话管家 —— 会话历史文件（归档浏览与清理）与会话健康检查（体检 → 处方 → 出院），不碰会话日志、只做可逆处置",
   "keywords": [
@@ -82,12 +80,13 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.5-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.5-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.5-rc.1 <0.2.0-0",
-    "@deepseek-ai/dsh-client-ui-slots": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "react": "^18.2.0"
+    "@deepseek-ai/dsh-client-locale": ">=0.1.7-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-settings": ">=0.1.7-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-settings-general": ">=0.1.7-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.7-rc.1 <0.2.0-0",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-session": ">=0.1.7-rc.1 <0.2.0-0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-locale": {
@@ -101,12 +100,15 @@
     },
     "@deepseek-ai/dsh-client-ui-slots": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.7-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "^18.3.7",
@@ -117,6 +119,7 @@
     "tsx": "^4.23.12",
     "typescript": "^5.6.0",
     "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^4.1.1"
+    "vitest": "^4.1.1",
+    "@deepseek-ai/dsh-session": "^0.1.7-rc.1"
   }
 }

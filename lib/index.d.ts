@@ -1,9 +1,10 @@
-//#region node_modules/.pnpm/cosmokit@1.8.1/node_modules/cosmokit/lib/index.d.ts
+import z from "@deepseek-ai/schemastery";
+//#region node_modules/cosmokit/lib/index.d.ts
 type Dict<T = any, K extends string | symbol = string> = { [key in K]: T; };
 type Promisify<T> = Promise<T extends Promise<infer S> ? S : T>;
 type Awaitable<T> = [T] extends [Promise<unknown>] ? T : T | Promise<T>;
 //#endregion
-//#region node_modules/.pnpm/@standard-schema+spec@1.1.0/node_modules/@standard-schema/spec/dist/index.d.ts
+//#region node_modules/@standard-schema/spec/dist/index.d.ts
 /** The Standard Typed interface. This is a base type extended by other specs. */
 interface StandardTypedV1<Input = unknown, Output = Input> {
   /** The Standard properties. */
@@ -80,7 +81,7 @@ declare namespace StandardSchemaV1 {
   type InferOutput<Schema extends StandardTypedV1> = StandardTypedV1.InferOutput<Schema>;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/utils.d.ts
+//#region node_modules/cordis/lib/utils.d.ts
 declare class DisposableList<T extends WeakKey> {
   private sn;
   private map;
@@ -112,7 +113,7 @@ declare const symbols: {
   resolveConfig: typeof Service.resolveConfig;
 };
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/registry.d.ts
+//#region node_modules/cordis/lib/registry.d.ts
 type Inject<M = Dict> = (keyof M)[] | { [K in keyof M]?: M[K]; };
 type InjectKey = keyof { [K in keyof Context & string as Context[K] extends {
   [symbols.config]: any;
@@ -182,7 +183,7 @@ declare class RegistryService {
   plugin(plugin: Plugin, config?: any, getOuterStack?: () => string[]): Fiber & PromiseLike<Fiber>;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/reflect.d.ts
+//#region node_modules/cordis/lib/reflect.d.ts
 declare module './context' {
   interface Context {
     get<K extends string & keyof this>(name: K, strict?: boolean): undefined | this[K];
@@ -230,7 +231,7 @@ declare class ReflectService {
   bind<T extends Function>(callback: T): T;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/fiber.d.ts
+//#region node_modules/cordis/lib/fiber.d.ts
 declare module './context' {
   interface Context extends Pick<Fiber, 'effect'> {
     fiber: Fiber;
@@ -291,7 +292,7 @@ declare class Fiber {
   update(config: any, noSave?: boolean): Awaitable<void>;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/events.d.ts
+//#region node_modules/cordis/lib/events.d.ts
 type Parameters<F> = F extends ((...args: infer P) => any) ? P : never;
 type ReturnType<F> = F extends ((...args: any) => infer R) ? R : never;
 type ThisType<F> = F extends ((this: infer T, ...args: any) => any) ? T : never;
@@ -349,7 +350,7 @@ interface Events {
   'internal/dispatch'(mode: DispatchMode, name: string | symbol, args: any[], thisArg: any): void;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/logger.d.ts
+//#region node_modules/cordis/lib/logger.d.ts
 declare module './context' {
   interface Intercept {
     logger: LoggerService.Intercept;
@@ -411,7 +412,7 @@ declare class LoggerService {
   [symbols.invoke](name?: string): Logger;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/context.d.ts
+//#region node_modules/cordis/lib/context.d.ts
 interface Context {
   [symbols.isolate]: Dict<symbol>;
   [symbols.intercept]: Dict;
@@ -438,7 +439,7 @@ declare class Context {
   intercept(name: string, config: any): this;
 }
 //#endregion
-//#region node_modules/.pnpm/cordis@4.0.0-rc.10/node_modules/cordis/lib/service.d.ts
+//#region node_modules/cordis/lib/service.d.ts
 declare abstract class Service<out T = never> {
   protected ctx: Context;
   static readonly init: unique symbol;
@@ -1228,6 +1229,16 @@ declare function scanSessions(options: {
 //#region src/index.d.ts
 /** 本插件声明的宿主服务（与 toggle 相同的注入面）。 */
 declare const inject: string[];
+/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7：volatile 字段即设置表单。 */
+declare const Config: z<Schemastery.ObjectS<NoInfer<{
+  enabled: z<boolean, boolean, "volatile-defined">;
+  historyFiles: z<boolean, boolean, "volatile-defined">;
+  healthCheck: z<boolean, boolean, "volatile-defined">;
+}>>, Schemastery.ObjectT<NoInfer<{
+  enabled: z<boolean, boolean, "volatile-defined">;
+  historyFiles: z<boolean, boolean, "volatile-defined">;
+  healthCheck: z<boolean, boolean, "volatile-defined">;
+}>>, "plain">;
 /** 运行时依赖。 */
 interface StewardRuntime {
   config: () => Required<StewardConfig>;
@@ -1266,9 +1277,10 @@ declare function methodEnabled(method: string, config: Required<StewardConfig>):
  */
 declare function handleMethod(method: string, payload: unknown, runtime: StewardRuntime): Promise<unknown>;
 /**
- * 插件主体：注册设置命名空间、装配运行时、挂载 fenced 路由。
- * @param ctx - host 插件上下文（webServer / webRuntime / 可选 settings、sessionQuery、sessions、sessionProjections）。
+ * 插件主体：装配运行时、挂载 fenced 路由。
+ * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、sessions、sessionProjections）。
+ * @param config - 组合条目（0.1.7：`.volatile()` 字段为 live ref）。
  */
-declare function apply(ctx: Context): void;
+declare function apply(ctx: Context, config?: Partial<StewardConfig>): void;
 //#endregion
-export { DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
+export { Config, DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
