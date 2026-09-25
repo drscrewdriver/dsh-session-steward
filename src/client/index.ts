@@ -13,7 +13,7 @@ import {
   STEWARD_SETTINGS_NAMESPACE,
   type StewardConfig,
 } from '../config.ts'
-import { StewardCardScope } from './card.tsx'
+import { StewardCardScope, StewardSettingsCard, type CardTranslate } from './card.tsx'
 import { en, translate, zh, type LocaleKey } from './locales.ts'
 import { StewardFooter, StewardPanel, TAB_HEALTH, TAB_HISTORY } from './panel.tsx'
 
@@ -179,8 +179,22 @@ export function apply(ctx: Context): void {
     (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound }),
   ), 'dsh-session-steward: sidebar footer entry')
 
-  // 0.1.7：旧的插件设置卡席位已删除 —— 配置表单由 volatile 字段自动生成，
-  // 不再注册任何设置卡。
+  // 插件族共用设置 tab（dsh-thinking-levels 的顶级「起子插件设置」节声明该子
+  // 席位）。thinking-levels 缺席时本 inject 静默等待，不阻塞客户端半。
+  slots.inject('dsh-family.tab', () => slots.register(
+    {
+      name: 'dsh-family.tab',
+      id: STEWARD_ENTRY_ID,
+      order: 40,
+      // 账本 label：读期求值，跟随当前 locale（translate 内建 zh/en 兜底）。
+      label: () => translate((locale as { bind?: (n: string) => CardTranslate } | undefined)?.bind?.(NS), 'card.title'),
+      locale: NS,
+    },
+    (props: { t?: CardTranslate }) => createElement(StewardSettingsCard, {
+      scope: bound as StewardCardScope,
+      t: props.t,
+    }),
+  ), 'dsh-session-steward: family settings tab')
 }
 
 /** 入口按钮：持有面板开关；两个页签的可见性来自配置快照。 */
