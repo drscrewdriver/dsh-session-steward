@@ -2,6 +2,10 @@
 
 DSH Web 插件：**会话历史文件 + 会话健康检查**。
 
+> **本版（0.5.0）以 DSH 0.2.0 为主线**（peer/engines = `>=0.2.0-rc.1 <0.2.1-0`，npm dist-tag `dsh-0.2.0`，分支 `compat/0.2.0`）。
+> DSH 0.1.7 线由 0.4.8（dist-tag `dsh-0.1.7`，分支 `compat/0.1.7`）继续服务，不再随本线演进。
+> 0.2.0-rc.1 对本插件消费的宿主面（会话 V4 格式与 `dsh-session-format-v3-to-v4` 第一方名单、`dsh-session` 解码导出面、归档目录契约 `session.jsonl.zstd`/`session.v3.jsonl.zstd` 双份 + `storages/session_projcache` + `workspace.json` 两处 id 名单）逐项对照核验**未变，代码零修改**；本版为纯元数据适配（peer/engines 换代、devDependencies 精确钉 `0.2.0-rc.1`、发布纪律面随版更新）。
+
 - **养老院（会话历史文件）**：浏览官方归档集合，两个**独立**操作 ——
   **取消归档状态**（只改数组，可逆）与 **清理归档文件**（真删磁盘实体，不可逆）。
 

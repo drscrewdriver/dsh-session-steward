@@ -1,5 +1,26 @@
 # 変更履歴
 
+## 0.5.0
+
+### 対応 —— DSH 0.2.0 線（compat/0.2.0 ブランチ、メタデータのみ・コード変更ゼロ）
+
+- **ホスト交代**：peer 5 件（dsh-client-locale / dsh-client-ui-settings / dsh-client-ui-settings-general /
+  dsh-client-ui-slots / dsh-session）と `engines.dsh` 2 箇所（package.json + dsh.plugin.json）を
+  `>=0.2.0-rc.1 <0.2.1-0` に統一。npm dist-tag は `dsh-0.2.0`。
+- **ゼロコードの実証**：`dsh-session-format-v3-to-v4@0.2.0-rc.1` の第一方名簿 2 枚（5+25 件）は本リポジトリの
+  転記版と完全一致。`dsh-session@0.2.0-rc.1` の導出面は `decodeSeqRanges` 継続、`decodeStorageRecord` は
+  0.1.7-rc.2 から一貫して未エクスポート（ソフトロード Guard が任意面として処置、両線で挙動同一）。
+  アーカイブ配置契約（`session.jsonl.zstd`/`session.v3.jsonl.zstd`、`storages/session_projcache`、
+  `workspace.json` の 2 つの id 名簿）も不変を検証。
+- **devDependencies**：`dsh-client-ui-slots` / `dsh-session` をキャレット除去し `0.2.0-rc.1` に正確にピン留め。
+- **依存ツリー更新**：node_modules と package-lock.json を削除して再生成。陳旧化した pnpm-lock.yaml /
+  pnpm-workspace.yaml は削除し npm 線に一本化。
+- **バージョンとリリース規律**：0.4.8 → **0.5.0**。dsh.plugin.json version 0.4.1 → 0.5.0（漂移の解消）。
+  `publishConfig.tag` → `dsh-0.2.0`。`release:015` を `release:020` に改名（`--tag dsh-0.2.0`）。
+  2 言語 description の「0.1.5 専用線」表記を更新。
+- 検証：install / build / typecheck / test 全緑（167 テスト）、`npm ls` に peer 競突なし、
+  node_modules 実装は dsh-session / dsh-client-ui-slots とも 0.2.0-rc.1。
+
 ## 0.4.8
 
 ### 修正 —— ST1：変換が第一-party プロデューサー名でホストと食い違う問題

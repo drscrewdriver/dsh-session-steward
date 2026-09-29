@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0
+
+### 适配 —— DSH 0.2.0 线（compat/0.2.0 分支，纯元数据适配，代码零修改）
+
+- **宿主换代**：peer 5 项（dsh-client-locale / dsh-client-ui-settings / dsh-client-ui-settings-general /
+  dsh-client-ui-slots / dsh-session）与两处 `engines.dsh`（package.json + dsh.plugin.json）统一换代为
+  `>=0.2.0-rc.1 <0.2.1-0`（rc 窗口锁线，0.2.1 起重新适配）；npm dist-tag `dsh-0.2.0`。
+- **零代码实证**（三处硬耦合点逐项对照 0.2.0-rc.1 实包/宿主源码核验）：
+  1. `dsh-session-format-v3-to-v4@0.2.0-rc.1` 的两张第一方名单（`RENAMED_PRODUCERS` 5 项 +
+     `RELEASED_SAME_NAME_PRODUCERS` 25 项）与本仓逐字照录版**逐项一致**；
+  2. `dsh-session@0.2.0-rc.1` 导出面：`decodeSeqRanges` 仍在；`decodeStorageRecord` 在
+     0.1.7-rc.2 与 0.2.0-rc.1 均**未导出**（软加载守卫按可选面处理，回落本地等价实现，两线行为一致）；
+  3. 归档目录契约未变：`session.jsonl.zstd`/`session.v3.jsonl.zstd` 双份命名方案两线同一函数、
+     `storages/session_projcache` 与 `workspace.json`（`global.archivedSessionIds` +
+     `tables.workspaces.*.sessionIds`）两处 id 名单均在。
+- **devDependencies**：`dsh-client-ui-slots` / `dsh-session` 去 caret，精确钉 `0.2.0-rc.1`
+  （有意不追 rc.2，与宿主基线 4878cdabd8 对齐；收益在 vitest/运行时软加载解析到 0.2.0 实包）。
+- **依赖树刷新**：删 node_modules 与 package-lock.json 重生提交；删除陈旧的
+  pnpm-lock.yaml（钉 0.1.0-rc.8 线）与 pnpm-workspace.yaml，随 npm 线单一化。
+- **版本与发布纪律**：0.4.8 → **0.5.0**；dsh.plugin.json version 0.4.1 → 0.5.0（治愈基线漂移）；
+  `publishConfig.tag` → `dsh-0.2.0`；`release:015` 改名 `release:020`（`--tag dsh-0.2.0`）；
+  双语 description「0.1.5 专线」文案随版更新。
+- 验证：install / build / typecheck / test 全绿（167 测试），`npm ls` 无 peer 冲突，node_modules 实装
+  dsh-session / dsh-client-ui-slots 均 0.2.0-rc.1。
+
 ## 0.4.8
 
 ### 修复 —— ST1：转换对第一方生产者名与宿主分叉

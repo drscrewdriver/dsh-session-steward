@@ -2,6 +2,8 @@
 
 A DSH web plugin for **session history files** and **session health checks**. It never touches session data itself.
 
+> **This release (0.5.0) targets the DSH 0.2.0 line** (peer/engines `>=0.2.0-rc.1 <0.2.1-0`, npm dist-tag `dsh-0.2.0`, branch `compat/0.2.0`). The DSH 0.1.7 line remains served by 0.4.8 (dist-tag `dsh-0.1.7`, branch `compat/0.1.7`). Every host surface this plugin consumes (session V4 format and the `dsh-session-format-v3-to-v4` first-party producer lists, the `dsh-session` decode exports, the archive layout `session.jsonl.zstd`/`session.v3.jsonl.zstd` + `storages/session_projcache` + the two id lists in `workspace.json`) was verified unchanged in 0.2.0-rc.1 — **zero code changes**; this release is metadata-only.
+
 - **Retirement Home (history files)** — browse the official archive set and prune ids in bulk
   (backup + atomic replace; a DSH restart is required for the host to reload it).
 - **Checkup (health)** — four gates → prescription (command list) → discharge (reversible repair with a

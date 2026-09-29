@@ -1,5 +1,26 @@
 # 변경 이력
 
+## 0.5.0
+
+### 대응 —— DSH 0.2.0 라인(compat/0.2.0 브랜치, 메타데이터만 변경 · 코드 수정 없음)
+
+- **호스트 세대교체**: peer 5항(dsh-client-locale / dsh-client-ui-settings / dsh-client-ui-settings-general /
+  dsh-client-ui-slots / dsh-session)과 `engines.dsh` 2곳(package.json + dsh.plugin.json)을
+  `>=0.2.0-rc.1 <0.2.1-0`으로 통일. npm dist-tag은 `dsh-0.2.0`.
+- **제로 코드 입증**: `dsh-session-format-v3-to-v4@0.2.0-rc.1`의 퍼스트파티 목록 2장(5+25항)은 본 저장소의
+  전사본과 완전 일치. `dsh-session@0.2.0-rc.1` 익스포트는 `decodeSeqRanges` 유지, `decodeStorageRecord`는
+  0.1.7-rc.2와 0.2.0-rc.1 모두 미익스포트(소프트로드 가드가 옵션면으로 처리, 양 라인 동작 동일).
+  아카이브 배치 계약(`session.jsonl.zstd`/`session.v3.jsonl.zstd`, `storages/session_projcache`,
+  `workspace.json`의 두 id 목록)도 불변 검증.
+- **devDependencies**: `dsh-client-ui-slots` / `dsh-session` 캐럿 제거 후 `0.2.0-rc.1`로 정확히 고정.
+- **의존성 트리 갱신**: node_modules와 package-lock.json 삭제 후 재생성. 낡은 pnpm-lock.yaml /
+  pnpm-workspace.yaml 삭제, npm 라인으로 일원화.
+- **버전과 릴리스 규율**: 0.4.8 → **0.5.0**. dsh.plugin.json version 0.4.1 → 0.5.0(드리프트 해소).
+  `publishConfig.tag` → `dsh-0.2.0`. `release:015`를 `release:020`으로 개명(`--tag dsh-0.2.0`).
+  2개 국어 description의 「0.1.5 전용선」 문구 갱신.
+- 검증: install / build / typecheck / test 전부 통과(167 테스트), `npm ls` peer 충돌 없음,
+  node_modules 실장 dsh-session / dsh-client-ui-slots 모두 0.2.0-rc.1.
+
 ## 0.4.8
 
 ### 수정 —— ST1：변환이 제1자 프로듀서명에서 호스트와 불일치
