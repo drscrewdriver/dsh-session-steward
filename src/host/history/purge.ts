@@ -25,18 +25,55 @@
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { editWorkspaceDocument } from './archive-source.ts'
+import { SOURCE_MIGRATE_BACKUP_SUFFIX } from '../health/source-kind.ts'
 
 /** 一个归档会话在磁盘上的实体与占用。 */
 export interface StewardSessionUsage {
   sessionId: string
   /** 转录目录绝对路径（不存在时缺省）。 */
   dir?: string
-  /** 转录目录占用字节数。 */
+  /** 转录目录占用字节数（**含**署名转换备份；备份单列在 `backupBytes`）。 */
   bytes: number
+  /**
+   * 署名转换备份（`*.pre-sourcemigrate-<ts>`，见 `SOURCE_MIGRATE_BACKUP_SUFFIX`）
+   * 占用字节数 —— 是 `bytes` 的子集，单列出来免得被当作日志体积误读。
+   */
+  backupBytes: number
+  /** 备份文件个数。 */
+  backupCount: number
   /** 投影缓存文件绝对路径（不存在时缺省）。 */
   cacheFile?: string
   /** 投影缓存占用字节数。 */
   cacheBytes: number
+}
+
+/** 是否署名转换备份文件（`*.pre-sourcemigrate-<ts>`）。 */
+export function isSourceMigrateBackupName(name: string): boolean {
+  return name.includes(SOURCE_MIGRATE_BACKUP_SUFFIX)
+}
+
+/**
+ * 列出一个转录目录里的署名转换备份（只扫顶层：备份与日志同目录落盘）。
+ * @returns 备份绝对路径与合计字节数；目录不存在时为空。
+ */
+export function backupFilesIn(dir: string): { files: string[]; bytes: number } {
+  const files: string[] = []
+  let bytes = 0
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return { files, bytes }
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !isSourceMigrateBackupName(entry.name)) continue
+    const path = join(dir, entry.name)
+    files.push(path)
+    try {
+      bytes += statSync(path).size
+    } catch { /* 竞态：文件刚被删 */ }
+  }
+  return { files, bytes }
 }
 
 /** 转录根目录（`<dshHome>/sessions`）。 */
@@ -136,11 +173,15 @@ export function locateSessionUsage(ids: readonly string[], dshHome: string): Map
   const out = new Map<string, StewardSessionUsage>()
   for (const sessionId of ids) {
     const key = dirKey(sessionId)
-    const usage: StewardSessionUsage = { sessionId, bytes: 0, cacheBytes: 0 }
+    const usage: StewardSessionUsage = { sessionId, bytes: 0, backupBytes: 0, backupCount: 0, cacheBytes: 0 }
     const dir = dirs.get(key)
     if (dir !== undefined) {
       usage.dir = dir
       usage.bytes = dirSize(dir)
+      // 备份单列（是 bytes 的子集）：统计路不把备份当日志体积误报，清理路据此如实上报。
+      const backups = backupFilesIn(dir)
+      usage.backupBytes = backups.bytes
+      usage.backupCount = backups.files.length
     }
     // 缓存文件名可能带前缀也可能不带 —— 两个候选都试。
     for (const name of [`${sessionId}.json`, `${key}.json`]) {
@@ -178,8 +219,10 @@ export interface StewardHistoryPurgeResult {
   ok: boolean
   /** 成功清理的会话数。 */
   purged?: number
-  /** 释放的字节数（转录 + 投影缓存）。 */
+  /** 释放的字节数（转录 + 投影缓存；含随目录删除的署名转换备份）。 */
   freedBytes?: number
+  /** 一并删除的署名转换备份（`*.pre-sourcemigrate-<ts>`）个数。 */
+  backupsRemoved?: number
   /** 逐条失败原因；不阻断其余条目。 */
   failures?: { sessionId: string; reason: string }[]
   requiresRestart?: boolean
@@ -266,6 +309,7 @@ export function purgeHistory(
   const failures: { sessionId: string; reason: string }[] = []
   let purged = 0
   let freedBytes = 0
+  let backupsRemoved = 0
 
   for (const sessionId of ids) {
     const entry = usage.get(sessionId)
@@ -277,6 +321,8 @@ export function purgeHistory(
         failures.push({ sessionId, reason: `拒绝删除越界路径：${entry.dir}` })
         continue
       }
+      // 整目录删除已连带备份；这里只是**先点个数**，让结果如实上报「备份一并处置了」。
+      backupsRemoved += entry.backupCount
       try {
         rmSync(entry.dir, { recursive: true, force: true })
         entryFreed += entry.bytes
@@ -312,11 +358,12 @@ export function purgeHistory(
     freedBytes += entryFreed
   }
 
-  log?.(`archive purge: cleared ${purged} of ${ids.length}; freed ${(freedBytes / 1048576).toFixed(1)}MB; failures ${failures.length}`)
+  log?.(`archive purge: cleared ${purged} of ${ids.length}; freed ${(freedBytes / 1048576).toFixed(1)}MB; backups ${backupsRemoved}; failures ${failures.length}`)
   return {
     ok: true,
     purged,
     freedBytes,
+    backupsRemoved,
     requiresRestart: true,
     ...(failures.length === 0 ? {} : { failures }),
   }

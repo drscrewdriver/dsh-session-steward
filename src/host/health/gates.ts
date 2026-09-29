@@ -16,6 +16,7 @@ import {
   type SessionPriority,
 } from './generation.ts'
 import { firstLosslessViolation, type LosslessViolation } from './lossless.ts'
+import { gateSourceKind, readSourceKindFacts } from './source-kind.ts'
 
 /**
  * gate 严重级。
@@ -45,7 +46,7 @@ export interface GateAttribution {
 
 /** 一个 gate 的结果。 */
 export interface GateResult {
-  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read' | 'source-kind'
   level: GateLevel
   evidence: string
   attribution?: GateAttribution
@@ -402,6 +403,8 @@ export function buildSessionReport(context: GateContext): SessionHealthReport {
     gates.push(gateProjectionCache(readProjectionCache(context.sessionId, tail.lastSeq, context.dshHome)))
     gates.push(gateLosslessJson(context.projectionState, context.attribute))
     gates.push(gateColdRead(tail))
+    // 署名格式门：v4 线要求 producer-owned source kind（详见 source-kind.ts 的版本依赖表）。
+    gates.push(gateSourceKind(readSourceKindFacts(log)))
   }
   // 总判聚合：fail > warn > ok。`skipped` 有意不参与——它是「本门无从判定」的
   // 中性档，既非通过也非异常，抬升总判会把冷态会话全变成「注意」（实测噪声源）。

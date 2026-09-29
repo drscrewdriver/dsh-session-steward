@@ -12,6 +12,7 @@ import {
   type HealthReport,
   type HealthScanResponse,
   type HealthSessionResponse,
+  type SourceMigrateResponse,
 } from './host-api.ts'
 import { translate, type LocaleKey } from './locales.ts'
 
@@ -24,6 +25,7 @@ const GATE_LABEL: Record<HealthGate['id'], LocaleKey> = {
   'projection-cache': 'health.gate.projection-cache',
   'lossless-json': 'health.gate.lossless-json',
   'cold-read': 'health.gate.cold-read',
+  'source-kind': 'health.gate.source-kind',
 }
 
 const LEVEL_LABEL = {
@@ -65,6 +67,9 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
   const [error, setError] = useState<string | null>(null)
   const [detail, setDetail] = useState<HealthSessionResponse | null>(null)
   const [repairing, setRepairing] = useState(false)
+  const [migrating, setMigrating] = useState(false)
+  /** 署名转换结果提示（一次性；点击转换或返回列表时清除）。 */
+  const [migrateNote, setMigrateNote] = useState<string | null>(null)
   const [discharge, setDischarge] = useState<HealthRepairResponse | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   /** 分批扫描进度：done = 已访问会话数，total = 语料总数（0 表示尚未拿到分母）。 */
@@ -119,6 +124,7 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
     setError(null)
     setDetail(null)
     setDischarge(null)
+    setMigrateNote(null)
     setFindings(null)
     setCacheInfo(null)
     setProgress({ done: 0, total: 0 })
@@ -190,6 +196,7 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
   const openDetail = (sessionId: string): void => {
     setError(null)
     setDischarge(null)
+    setMigrateNote(null)
     void callHostAny<HealthSessionResponse>('session-health-session', { sessionId }, 120_000)
       .then((res) => {
         if (res.ok === true) {
@@ -224,6 +231,31 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
       void navigator.clipboard?.writeText(text)
       setCopied(text)
     } catch { /* 剪贴板不可用时仍然展示命令 */ }
+  }
+
+  // 署名转换：仅当 source-kind 门报 warn（v4 日志里观测到旧署名行）时出现。
+  // 成败都回写最新报告；结果提示一次性展示，避免残留误导。
+  const runSourceMigrate = (sessionId: string): void => {
+    setMigrating(true)
+    setError(null)
+    setMigrateNote(null)
+    void callHostAny<SourceMigrateResponse>('session-health-source-migrate', { sessionId }, 120_000)
+      .then((res) => {
+        if (res.after !== undefined) {
+          setDetail({ ok: true, report: res.after, prescriptions: detail?.prescriptions ?? [] })
+          reconcileRow(res.after)
+        }
+        const changed = res.outcome?.changedRows ?? 0
+        if (res.ok === true && changed > 0) {
+          setMigrateNote(translate(t, 'health.sourceMigrated', { n: changed, backup: res.outcome?.backup ?? '' }))
+        } else if (res.ok === true) {
+          setMigrateNote(translate(t, 'health.sourceMigrateNone'))
+        } else {
+          setMigrateNote(translate(t, 'health.sourceMigrateFail', { error: res.outcome?.error ?? res.error ?? '未知原因' }))
+        }
+      })
+      .catch((err: unknown) => setError(String(err instanceof Error ? err.message : err)))
+      .finally(() => setMigrating(false))
   }
 
   const report = detail?.report ?? discharge?.after
@@ -348,6 +380,25 @@ export function HealthPanel({ t, onClose }: { t?: PanelTranslate; onClose: () =>
         createElement('span', { key: 'tx' }, repairing ? translate(t, 'health.repairing') : translate(t, 'health.repair')),
       ]),
     ]))
+    // 署名转换按钮：只在 source-kind 门报 warn（v4 日志里观测到旧署名行）时出现，
+    // 不随常规处置出现——v3 及更早版本线的旧行由宿主迁移负责，不该一键误触。
+    if (report.gates.some(gate => gate.id === 'source-kind' && gate.level === 'warn')) {
+      lines.push(createElement('div', { key: 'migrate', className: 'dss_phaseRow' }, [
+        createElement('button', {
+          key: 'm',
+          type: 'button',
+          className: 'dss_actBtn',
+          disabled: migrating,
+          onClick: () => { runSourceMigrate(report.sessionId) },
+        }, [
+          migrating ? createElement('span', { key: 'sp', className: 'dss_spinner', 'aria-hidden': 'true' }) : null,
+          createElement('span', { key: 'tx' }, migrating
+            ? translate(t, 'health.sourceMigrating')
+            : translate(t, 'health.sourceMigrate')),
+        ]),
+        migrateNote !== null && createElement('span', { key: 'note', className: 'dss_status' }, migrateNote),
+      ]))
+    }
     const prescriptions = detail?.prescriptions ?? discharge?.prescriptions ?? []
     if (prescriptions.length > 0) {
       lines.push(createElement('div', { key: 'cmds', className: 'dss_cmdBlock' }, [

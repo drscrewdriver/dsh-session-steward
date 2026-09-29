@@ -735,7 +735,7 @@ interface GateAttribution {
 }
 /** 一个 gate 的结果。 */
 interface GateResult {
-  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read';
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read' | 'source-kind';
   level: GateLevel;
   evidence: string;
   attribution?: GateAttribution;
@@ -884,6 +884,8 @@ interface StewardHistoryRow {
   bytes: number;
   /** 投影缓存占用字节数。 */
   cacheBytes: number;
+  /** 署名转换备份（`*.pre-sourcemigrate-<ts>`）占用字节数——`bytes` 的子集，单列防误读为日志体积。 */
+  backupBytes: number;
 }
 /** 列表结果。 */
 interface StewardHistoryListResult {
@@ -945,13 +947,30 @@ interface StewardSessionUsage {
   sessionId: string;
   /** 转录目录绝对路径（不存在时缺省）。 */
   dir?: string;
-  /** 转录目录占用字节数。 */
+  /** 转录目录占用字节数（**含**署名转换备份；备份单列在 `backupBytes`）。 */
   bytes: number;
+  /**
+   * 署名转换备份（`*.pre-sourcemigrate-<ts>`，见 `SOURCE_MIGRATE_BACKUP_SUFFIX`）
+   * 占用字节数 —— 是 `bytes` 的子集，单列出来免得被当作日志体积误读。
+   */
+  backupBytes: number;
+  /** 备份文件个数。 */
+  backupCount: number;
   /** 投影缓存文件绝对路径（不存在时缺省）。 */
   cacheFile?: string;
   /** 投影缓存占用字节数。 */
   cacheBytes: number;
 }
+/** 是否署名转换备份文件（`*.pre-sourcemigrate-<ts>`）。 */
+declare function isSourceMigrateBackupName(name: string): boolean;
+/**
+ * 列出一个转录目录里的署名转换备份（只扫顶层：备份与日志同目录落盘）。
+ * @returns 备份绝对路径与合计字节数；目录不存在时为空。
+ */
+declare function backupFilesIn(dir: string): {
+  files: string[];
+  bytes: number;
+};
 /** 转录根目录（`<dshHome>/sessions`）。 */
 declare function sessionsRootFor(dshHome: string): string;
 /**
@@ -997,8 +1016,10 @@ interface StewardHistoryPurgeResult {
   ok: boolean;
   /** 成功清理的会话数。 */
   purged?: number;
-  /** 释放的字节数（转录 + 投影缓存）。 */
+  /** 释放的字节数（转录 + 投影缓存；含随目录删除的署名转换备份）。 */
   freedBytes?: number;
+  /** 一并删除的署名转换备份（`*.pre-sourcemigrate-<ts>`）个数。 */
+  backupsRemoved?: number;
   /** 逐条失败原因；不阻断其余条目。 */
   failures?: {
     sessionId: string;
@@ -1022,6 +1043,88 @@ interface StewardPurgeOptions {
  * @returns 清理条数、释放字节数与逐条失败。
  */
 declare function purgeHistory(payload: unknown, log?: (msg: string) => void, options?: StewardPurgeOptions): StewardHistoryPurgeResult;
+//#endregion
+//#region src/host/health/source-kind.d.ts
+/** v4 线起点的宿主版本（会话格式 v4 引入 producer-owned source kind）。 */
+declare const V4_HOST_MIN = "0.1.7-rc.1";
+/** 一份日志里的旧署名事实。 */
+interface SourceKindFacts {
+  /** 旧署名事件总数。 */
+  legacyCount: number;
+  /** 按生产者插件名统计。 */
+  byPlugin: Record<string, number>;
+  /** 命中样例（seq + 插件名），最多 5 条，供证据展示。 */
+  examples: {
+    seq: number;
+    plugin: string;
+  }[];
+  /** 日志 header 的格式代次（无从读取时 undefined）。 */
+  headerVersion?: number;
+}
+/** 从解码后的日志提取旧署名事实（只读）。 */
+declare function readSourceKindFacts(log: SessionLogRead): SourceKindFacts;
+/**
+ * gate 5：插件署名格式（v4 线要求 producer-owned kind）。
+ *
+ * 档位判据（有据才抬档）：
+ * - header.version ≥ 4 且观测到旧署名行 → `warn`：v4 校验拒绝这种署名；存量行让
+ *   未适配插件的读回判断（`kind === 'plugin' && plugin === name`）失配，转换可消除；
+ * - header.version < 4 → `ok`：v3 及更早线旧行合法，宿主迁移负责，**不动**（防过度操作）；
+ * - header.version 无从读取 → `skipped`：无从判定该走哪条版本线。
+ * @param facts - 旧署名事实；undefined 表示未提供（无日志）。
+ */
+declare function gateSourceKind(facts: SourceKindFacts | undefined): {
+  id: 'source-kind';
+  level: GateLevel;
+  evidence: string;
+  detail?: Record<string, unknown>;
+};
+/** 转换结果。 */
+interface SourceKindMigrationOutcome {
+  ok: boolean;
+  sessionId: string;
+  /** 被改写的日志路径。 */
+  path: string;
+  /** 备份路径（改写前的完整副本；ok 且 changed 时必有）。 */
+  backup?: string;
+  /** 改写的行数。 */
+  changedRows?: number;
+  /** 按生产者插件名统计的改写行数。 */
+  byPlugin?: Record<string, number>;
+  /**
+   * 按生产者名统计的**跳过**行数（第一方名，宿主迁移职权，见
+   * `isFirstPartyLegacyProducer`）。跳过是如实上报，不是静默丢弃。
+   */
+  skippedFirstParty?: Record<string, number>;
+  error?: string;
+}
+/**
+ * 从旧署名对象构造新署名：`{ kind: 'plugin', plugin: name, …rest }` → `{ kind: 'plugin:name', …rest }`。
+ * 非 legacy（缺 plugin 字段 / kind 不符）返回 undefined，调用方跳过该行。
+ *
+ * ⚠️ 只对**第三方**生产者名成立（第四轮审计 ST1）：宿主 `producerKind`
+ * （dsh-session-format-v3-to-v4@0.1.7-rc.2 lib/index.js:88-96）对第一方名走改名表
+ * 或同名裸 kind，本函数无条件加前缀会对那 30 个名字写出宿主永不产出的 kind。
+ * 第一方名由 `FIRST_PARTY_RENAMED_PRODUCERS` / `FIRST_PARTY_SAME_NAME_PRODUCERS`
+ * 判定，`migrateSessionSourceKind` 命中即跳过并如实上报（宿主迁移职权，不代转换）。
+ */
+declare function migrateLegacySource(source: unknown): Record<string, unknown> | undefined;
+/**
+ * 转换一个会话日志里的旧署名行（v4 线专用；先备份，只动署名字段）。
+ *
+ * 执行闸（任一不满足即拒绝，不写盘）：
+ * 1. 日志可整体解码且无完整性问题（撕裂尾帧 / 解码失败 / seq 缺口）；
+ * 2. header.version ≥ 4（v3 及更早的旧行按契约由宿主迁移，不动）；
+ * 3. 确有旧署名行（没有则空手而归，不做无谓重压缩）。
+ * @param sessionId - 会话 id（用于结果标注）。
+ * @param logPath - 当前代日志路径（必须 .zstd 结尾）。
+ * @param log - 已解码的日志（复用体检结果，闸 1/2 在其上判定）。
+ * @param dshHome - DSH home（备份不依赖它，参数保留与其它处置一致的面）。
+ * @param now - 时间源（备份后缀，测试可控）。
+ */
+declare function migrateSessionSourceKind(sessionId: string, logPath: string, log: SessionLogRead, dshHome?: string, now?: () => number): SourceKindMigrationOutcome;
+/** 备份文件的后缀约定（purge/清理工具可据此识别并一并处置）。 */
+declare const SOURCE_MIGRATE_BACKUP_SUFFIX = ".pre-sourcemigrate-";
 //#endregion
 //#region src/host/health/lossless.d.ts
 /**
@@ -1266,7 +1369,7 @@ interface StewardRuntime {
  * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
  */
 declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune", "session-history-purge"];
-declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair"];
+declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair", "session-health-source-migrate"];
 /** 依据开关判定某方法是否启用。 */
 declare function methodEnabled(method: string, config: Required<StewardConfig>): boolean;
 /**
@@ -1283,4 +1386,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context, config?: Partial<StewardConfig>): void;
 //#endregion
-export { Config, DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, apply, assessRepair, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
+export { Config, DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, V4_HOST_MIN, apply, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };

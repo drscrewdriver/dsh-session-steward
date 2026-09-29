@@ -27,6 +27,9 @@ export const NS = 'dsh-session-steward'
 interface StewardSlotsService {
   inject(name: string, callback: () => unknown, label?: string): void
   register(config: Record<string, unknown>, component: unknown): unknown
+  entries(name: string): Array<{ options: { id?: string; order?: number; label?: unknown } }>
+  getVersion(name: string): number
+  subscribe(name: string, listener: () => void): () => void
 }
 
 /** locale 服务面。 */
@@ -63,8 +66,16 @@ function injectStyles(): () => void {
   const style = document.createElement('style')
   style.id = id
   style.textContent = `
+/* 侧栏 footer 槽位公约（2026-09-26）：一行多入口（第三方 dsh-context 等）会互相
+   挤占 —— 宿主 .footerActions 是 nowrap flex 行。这里允许容器换行，并把本插件
+   入口钉成独占一整行（flex-basis:100%）；其余入口（含第三方）自然落到后续行，
+   各行内部自行布局，谁也不挤谁。类名用 [class*=] 中段匹配：宿主是 CSS Module
+   哈希类名（实测形如 hHd-Xa_footerActions —— <hash>_<name>，哈希在前），
+   中段跨版本稳定。 */
+[class*="footerActions"]{flex-wrap:wrap;row-gap:2px;height:auto;min-height:0}
+/* 宽栏：独占一整行、放弃主动收缩（flex-shrink:0），行内居中；收起轨道回落自然宽度。 */
 .dss_entryWrap{flex:0 1 auto;display:inline-flex;align-items:center;min-width:0}
-.dss_entryWrapWide{margin-left:6px}
+.dss_entryWrapWide{flex:0 0 100%;width:100%;justify-content:center;margin-left:0}
 .dss_footerEntry{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:42px;padding:0 10px 0 8px;border:none;border-radius:12px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:14px;line-height:22px;white-space:nowrap;overflow:hidden;transition:background-color 160ms ease-out,color 160ms ease-out}
 .dss_footerEntry:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dss_footerEntryRail{width:28px;height:28px;padding:0;gap:0;border-radius:50%}
@@ -175,7 +186,7 @@ export function apply(ctx: Context): void {
 
   // 侧边栏入口：一个按钮，打开「养老院 / 体检」双页签面板。
   slots.inject('sidebar.footer.action', () => slots.register(
-    { name: 'sidebar.footer.action', id: STEWARD_ENTRY_ID, order: 12 },
+    { name: 'sidebar.footer.action', id: STEWARD_ENTRY_ID, order: 6 },
     (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound }),
   ), 'dsh-session-steward: sidebar footer entry')
 
@@ -195,6 +206,92 @@ export function apply(ctx: Context): void {
       t: props.t,
     }),
   ), 'dsh-session-steward: family settings tab')
+
+  // 家族节宿主选举（次优先级）：宿主 dsh-thinking-levels 缺席时顶上「起子插件
+  // 设置」节。下载量排名 session-steward(1090) 低于 session-guard(1522) → 宽限期
+  // 更长，guard 先尝试接管；guard 也缺席时本插件按同一 id `dsh-family` 接管，
+  // 声明同一个 dsh-family.tab 子席位并通用渲染全部贡献卡。与 guard 的并发竞争
+  // 由 ui-slots 同 id 重复注册抛错仲裁，先到者胜、后到者放弃。
+  const familyTabsHooks = makeFamilyTabsHooks(slots)
+  ctx.effect(() => {
+    let claimed: unknown
+    const timer = setTimeout(() => {
+      if (slots.entries('settings.section').some(e => e.options.id === FAMILY_SECTION_ID)) return
+      try {
+        claimed = slots.register({
+          name: 'settings.section',
+          id: FAMILY_SECTION_ID,
+          order: 40,
+          label: () => translate((locale as { bind?: (n: string) => CardTranslate } | undefined)?.bind?.(NS), 'family.title'),
+          locale: NS,
+          inject: () => ({ hooks: { tabs: familyTabsHooks } }),
+          children: { [FAMILY_CHILD_KEY]: { kind: 'list', scope: 'root' } },
+        }, StewardFamilySection)
+      } catch {
+        // 并发接管竞争落败（或设置壳未声明席位）：胜出方的节服务整个家族。
+      }
+    }, FAMILY_HOST_GRACE_MS)
+    return () => { clearTimeout(timer); if (typeof claimed === 'function') (claimed as () => void)() }
+  }, 'dsh-session-steward: family fallback host')
+}
+
+/** 家族节固定 id（与 thinking-levels / guard 的注册严格一致）。 */
+const FAMILY_SECTION_ID = 'dsh-family'
+/** 家族子席位 key（与 thinking-levels 的声明严格一致）。 */
+const FAMILY_CHILD_KEY = 'dsh-family.tab'
+/** 接管宽限期：guard 2000ms 先试，本插件 2600ms 兜底。 */
+const FAMILY_HOST_GRACE_MS = 2600
+
+/** 接管节的账本投影 hooks（与 thinking-levels 的 FamilySectionInjected 同形；locale 变更也触发重渲染）。 */
+function makeFamilyTabsHooks(slots: StewardSlotsService): {
+  getSnapshot: () => readonly FamilyTabEntry[]
+  subscribe: (listener: () => void) => () => void
+} {
+  let version = -1
+  let tabs: readonly FamilyTabEntry[] = []
+  return {
+    getSnapshot: () => {
+      const next = slots.getVersion(FAMILY_CHILD_KEY)
+      if (next !== version) {
+        version = next
+        tabs = slots.entries(FAMILY_CHILD_KEY)
+          .map(entry => ({
+            id: entry.options.id ?? '',
+            order: entry.options.order ?? 0,
+            label: typeof entry.options.label === 'function'
+              ? (() => { try { return String((entry.options.label as () => unknown)() ?? entry.options.id ?? '') } catch { return String(entry.options.id ?? '') } })()
+              : String(entry.options.label ?? entry.options.id ?? ''),
+          }))
+          .sort((a, b) => a.order - b.order)
+      }
+      return tabs
+    },
+    subscribe: (listener: () => void) => slots.subscribe(FAMILY_CHILD_KEY, listener),
+  }
+}
+
+/** 账本条目（id/order/label，label 已解析为字符串）。 */
+interface FamilyTabEntry {
+  id: string
+  order: number
+  label: string
+}
+
+/**
+ * 家族节接管组件（fallback host section）：纯通用渲染 —— 把 `dsh-family.tab`
+ * 账本里的每张贡献卡（含本插件自己的，接管时本插件也声明了该子席位）按
+ * order 依次 renderSlot；各卡本身是默认展开的抽屉，整节即一页抽屉。
+ */
+function StewardFamilySection(props: {
+  renderSlot: (key: string, owner?: object, opts?: { only?: string; fallback?: unknown }) => unknown
+  hooks: { tabs: { getSnapshot: () => readonly FamilyTabEntry[]; subscribe: (listener: () => void) => () => void } }
+}): ReactElement {
+  const tabs = useSyncExternalStore(props.hooks.tabs.subscribe, props.hooks.tabs.getSnapshot)
+  return createElement('div', { style: { display: 'grid', gap: '12px' } },
+    ...tabs.map(row => createElement('div', { key: row.id },
+      props.renderSlot(FAMILY_CHILD_KEY, {}, { only: row.id, fallback: null }) as ReactElement,
+    )),
+  )
 }
 
 /** 入口按钮：持有面板开关；两个页签的可见性来自配置快照。 */

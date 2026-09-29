@@ -73,6 +73,8 @@ export interface HistoryRow {
   bytes: number
   /** 投影缓存占用字节数。 */
   cacheBytes: number
+  /** 署名转换备份占用字节数（`bytes` 的子集，单列防误读）。 */
+  backupBytes: number
 }
 
 /** 历史文件列表响应。 */
@@ -91,6 +93,8 @@ export interface HistoryPurgeResponse {
   ok: boolean
   purged?: number
   freedBytes?: number
+  /** 一并删除的署名转换备份个数。 */
+  backupsRemoved?: number
   failures?: { sessionId: string; reason: string }[]
   requiresRestart?: boolean
   error?: string
@@ -98,7 +102,7 @@ export interface HistoryPurgeResponse {
 
 /** 一个 gate 的结果（与 host 侧 GateResult 对齐）。 */
 export interface HealthGate {
-  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read'
+  id: 'generation' | 'log-integrity' | 'projection-cache' | 'lossless-json' | 'cold-read' | 'source-kind'
   level: 'ok' | 'warn' | 'fail' | 'skipped'
   evidence: string
   attribution?: { projection?: string; package?: string; field?: string }
@@ -168,6 +172,15 @@ export interface HealthRepairResponse {
   /** 处置后仍未解决的门。 */
   residual?: { id: HealthGate['id']; level: HealthGate['level'] }[]
   prescriptions?: string[]
+  error?: string
+}
+
+/** 署名转换（session-health-source-migrate）响应。 */
+export interface SourceMigrateResponse {
+  ok: boolean
+  outcome?: { ok: boolean; path: string; backup?: string; changedRows?: number; byPlugin?: Record<string, number>; error?: string }
+  /** 转换后的最新体检报告（无论成败都给出，便于面板对照）。 */
+  after?: HealthReport
   error?: string
 }
 

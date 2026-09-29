@@ -26,15 +26,18 @@ import { purgeHistory } from './host/history/purge.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
 import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
+import { decodeSessionLogFile } from './host/health/decode.ts'
 import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
 import { countCorpus, findSession, scanSessions } from './host/health/scan.ts'
+import { gateSourceKind, migrateSessionSourceKind, readSourceKindFacts } from './host/health/source-kind.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
 export type { StewardConfig } from './config.ts'
 export { readArchiveSet, pruneArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
 export { listHistory, pruneHistory } from './host/history/archive.ts'
-export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor } from './host/history/purge.ts'
+export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor, isSourceMigrateBackupName, backupFilesIn } from './host/history/purge.ts'
 export { buildSessionReport, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, readProjectionCache, readTailFacts } from './host/health/gates.ts'
+export { gateSourceKind, migrateSessionSourceKind, migrateLegacySource, readSourceKindFacts, SOURCE_MIGRATE_BACKUP_SUFFIX, V4_HOST_MIN } from './host/health/source-kind.ts'
 export { firstLosslessViolation, isLossless } from './host/health/lossless.ts'
 export { decodeSessionLogBytes, decodeSessionLogFile, scanZstdFrames } from './host/health/decode.ts'
 export {
@@ -220,6 +223,7 @@ export const HEALTH_METHODS = [
   'session-health-scan',
   'session-health-session',
   'session-health-repair',
+  'session-health-source-migrate',
 ] as const
 
 /** 依据开关判定某方法是否启用。 */
@@ -348,6 +352,32 @@ export async function handleMethod(
     // 免得为了刷新一行而重扫整个语料。
     runtime.cache?.patch(report)
     return { ok: true, report, prescriptions: prescribe(report, runtime.dshHome) }
+  }
+
+  // session-health-source-migrate：把 v4 日志里的旧署名行（kind:'plugin' + plugin 字段）
+  // 转换为 producer-owned kind。这是「禁止改写会话日志」红线的唯一显式例外：
+  // 只动 source 署名字段、先整文件备份、v3 及更早版本线拒绝执行（见 source-kind.ts 的版本依赖表）。
+  if (method === 'session-health-source-migrate') {
+    if (session.logPath === undefined) {
+      return { ok: false, error: '会话尚未发布当前代日志，无从转换（先用会话代次工具发布）' }
+    }
+    const log = decodeSessionLogFile(session.logPath)
+    const outcome = migrateSessionSourceKind(sessionId, session.logPath, log, runtime.dshHome)
+    // 转换后重出报告：source-kind 门应转 ok；失败时报告原样（便于面板对照）。
+    const after = buildSessionReport({
+      sessionId,
+      dshHome: runtime.dshHome,
+      logPath: session.logPath,
+      generations: session.generations,
+      ...(projectionState === undefined ? {} : { projectionState }),
+      attribute: runtime.attribute,
+    })
+    runtime.cache?.patch(after)
+    runtime.log(
+      `source-kind migrate ${sessionId}: ok=${outcome.ok} changed=${outcome.changedRows ?? 0}` +
+        (outcome.error === undefined ? '' : ` error=${outcome.error}`),
+    )
+    return { ok: outcome.ok, outcome, after, report: after, error: outcome.error }
   }
 
   // session-health-repair：出院前的可逆处置 + before/after 对照 + 结果定性

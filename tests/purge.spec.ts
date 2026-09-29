@@ -10,15 +10,18 @@ import { mkdirSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  backupFilesIn,
   dirKey,
   dirSize,
   indexSessionDirs,
   isSafeChild,
+  isSourceMigrateBackupName,
   locateSessionUsage,
   projCacheRootFor,
   purgeHistory,
   sessionsRootFor,
 } from '../src/host/history/purge.ts'
+import { SOURCE_MIGRATE_BACKUP_SUFFIX } from '../src/host/health/source-kind.ts'
 import { listHistory } from '../src/host/history/archive.ts'
 
 /** 造一个最小 DSH 主目录：workspace.json + 转录目录 + 投影缓存。 */
@@ -121,6 +124,74 @@ describe('locateSessionUsage：按行的磁盘占用', () => {
     const { home } = fixture()
     const { dir } = layFiles(home, 'session-drop-a', 100, 0)
     expect(dirSize(dir)).toBe(116)
+  })
+})
+
+describe('署名转换备份（*.pre-sourcemigrate-*）：统计与清理两路都识别', () => {
+  it('后缀判定与 source-kind 常量一致；非备份名不误报', () => {
+    expect(isSourceMigrateBackupName(`session.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000000000`)).toBe(true)
+    expect(isSourceMigrateBackupName('session.jsonl.zstd')).toBe(false)
+    expect(isSourceMigrateBackupName('session.v3.jsonl.zstd')).toBe(false)
+  })
+
+  it('统计路：backupBytes/backupCount 单列，且是 bytes 的子集', () => {
+    const { home } = fixture()
+    const { dir } = layFiles(home, 'session-drop-a', 4096, 1024)
+    writeFileSync(join(dir, `session.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000000000`), Buffer.alloc(256, 4))
+    writeFileSync(join(dir, `session.v3.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000001000`), Buffer.alloc(16, 5))
+
+    const usage = locateSessionUsage(['session-drop-a'], home).get('session-drop-a')
+    expect(usage?.backupCount).toBe(2)
+    expect(usage?.backupBytes).toBe(272)
+    // bytes 是整目录真实占用（含备份），backupBytes 只是其中单列的子集
+    expect(usage?.bytes).toBe(4096 + 16 + 272)
+    expect(backupFilesIn(dir).files.length).toBe(2)
+  })
+
+  it('统计路：目录不存在或没有备份时如实返回 0', () => {
+    const { home } = fixture()
+    layFiles(home, 'session-drop-a', 64, 0)
+    const usage = locateSessionUsage(['session-drop-a'], home).get('session-drop-a')
+    expect(usage?.backupCount).toBe(0)
+    expect(usage?.backupBytes).toBe(0)
+    expect(locateSessionUsage(['session-ghost'], home).get('session-ghost')?.backupCount).toBe(0)
+  })
+
+  it('清理路：备份随目录一并删除，且 backupsRemoved 如实上报', () => {
+    const { home, store } = fixture()
+    const drop = layFiles(home, 'session-drop-a', 2048, 512)
+    writeFileSync(join(drop.dir, `session.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000000000`), Buffer.alloc(128, 6))
+    const keep = layFiles(home, 'session-keep-b', 64, 32)
+    writeFileSync(join(keep.dir, `session.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000000000`), Buffer.alloc(32, 7))
+
+    const result = purgeHistory({ sessionIds: ['session-drop-a'] }, undefined, { dshHome: home, searchPaths: [store] })
+
+    expect(result.ok).toBe(true)
+    expect(result.backupsRemoved).toBe(1)
+    expect(result.freedBytes).toBe(2048 + 16 + 128 + 512)
+    expect(existsSync(drop.dir)).toBe(false)
+    // 未选中的会话连备份一起原样保留
+    expect(existsSync(keep.dir)).toBe(true)
+    expect(readdirSync(keep.dir).some((name) => name.includes(SOURCE_MIGRATE_BACKUP_SUFFIX))).toBe(true)
+  })
+
+  it('清理路：无备份时 backupsRemoved 为 0', () => {
+    const { home, store } = fixture()
+    layFiles(home, 'session-drop-a', 64, 0)
+    const result = purgeHistory({ sessionIds: ['session-drop-a'] }, undefined, { dshHome: home, searchPaths: [store] })
+    expect(result.ok).toBe(true)
+    expect(result.backupsRemoved).toBe(0)
+  })
+
+  it('列表路：listHistory 按行带出 backupBytes', async () => {
+    const { home, store } = fixture()
+    const drop = layFiles(home, 'session-drop-a', 300, 100)
+    writeFileSync(join(drop.dir, `session.jsonl.zstd${SOURCE_MIGRATE_BACKUP_SUFFIX}1730000000000`), Buffer.alloc(48, 8))
+
+    const result = await listHistory(() => undefined, undefined, [store], home)
+    const row = (result.items ?? []).find((item) => item.sessionId === 'session-drop-a')
+    expect(row?.backupBytes).toBe(48)
+    expect(row?.bytes).toBe(300 + 16 + 48)
   })
 })
 

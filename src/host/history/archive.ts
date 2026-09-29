@@ -27,6 +27,8 @@ export interface StewardHistoryRow {
   bytes: number
   /** 投影缓存占用字节数。 */
   cacheBytes: number
+  /** 署名转换备份（`*.pre-sourcemigrate-<ts>`）占用字节数——`bytes` 的子集，单列防误读为日志体积。 */
+  backupBytes: number
 }
 
 /** 列表结果。 */
@@ -105,7 +107,7 @@ export async function listHistory(
   }
   const items: StewardHistoryRow[] = ids.map((sessionId) => {
     const title = titles.get(sessionId) ?? titleFromProjectionCache(sessionId)
-    return { sessionId, title, cwd: '', updatedAt: 0, bytes: 0, cacheBytes: 0 }
+    return { sessionId, title, cwd: '', updatedAt: 0, bytes: 0, cacheBytes: 0, backupBytes: 0 }
   })
   // 按行的磁盘占用：**以单元为单位**算，不给一个总量糊弄（实测单条可从 0 到 23 MB）。
   // 未提供 dshHome 时保持 0 —— 调方拿不到主目录就不猜路径。
@@ -117,6 +119,7 @@ export async function listHistory(
         if (entry === undefined) continue
         item.bytes = entry.bytes
         item.cacheBytes = entry.cacheBytes
+        item.backupBytes = entry.backupBytes
       }
     } catch { /* 体积是尽力而为，读不到不影响列表本身 */ }
   }

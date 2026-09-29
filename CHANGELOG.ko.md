@@ -1,5 +1,23 @@
 # 변경 이력
 
+## 0.4.8
+
+### 수정 —— ST1：변환이 제1자 프로듀서명에서 호스트와 불일치
+
+- `migrateSessionSourceKind`는 행마다 `isFirstPartyLegacyProducer`를 조회(호스트
+  `dsh-session-format-v3-to-v4@0.1.7-rc.2` lib/index.js:51-84의 두 표를 그대로 수록,
+  실측 5+25=**30**명). 해당 행은 건너뛰고 `skippedFirstParty`로 정직하게 보고——
+  제1자명은 호스트의 개명표/동명 kind(role 민감 분기 포함)으로 처리되므로 무조건
+  접두사를 붙이면 호스트가 생성하지 않는 kind를 기록해 귀속이 조용히 손상됩니다.
+  제1자 구형 행만 있는 로그는 기록하지 않음. 30명 대조 테스트와 호스트 공식
+  디코더 재독 단언 추가(161 테스트 전부 통과).
+
+### 강화 —— R2：purge 측 서명 변환 백업 인식
+
+- 통계와 정리 양 경로에서 `*.pre-sourcemigrate-<ts>` 백업을 인식: 통계는 행마다
+  `backupBytes`/`backupCount` 추가(`bytes`의 부분집합, 단열로 오독 방지),
+  정리 결과에 `backupsRemoved` 추가. 회귀 6건 추가, 전체 167 테스트.
+
 ## 0.1.0-alpha.6
 
 ### 수정 — 아이콘과 레이블 간격 축소, 좁은 사이드바에서 이웃을 밀어내지 않음

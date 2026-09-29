@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.4.2",
+  "version": "0.4.8",
   "publishConfig": {
     "tag": "dsh-0.1.7"
   },

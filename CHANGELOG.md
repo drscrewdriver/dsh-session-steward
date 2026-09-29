@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4.8
+
+### 修复 —— ST1：转换对第一方生产者名与宿主分叉
+
+- `migrateSessionSourceKind` 逐行查 `isFirstPartyLegacyProducer`（两张表逐字照录宿主
+  `dsh-session-format-v3-to-v4@0.1.7-rc.2` lib/index.js:51-84，实测 5+25=**30** 个第一方名），
+  命中即跳过该行并以 `skippedFirstParty` 如实上报——第一方名走宿主改名表/同名裸 kind
+  （含 role 敏感分支），无条件加前缀会写出宿主永不产出的 kind，静默损坏归因。
+  只含第一方旧行时不写盘。新增 30 名对照测试与宿主官方解码器读回断言（161 测试全绿）。
+
+### 加固 —— R2：purge 侧识别署名转换备份
+
+- 归档统计与清理两路识别 `*.pre-sourcemigrate-<ts>` 备份（后缀常量
+  `SOURCE_MIGRATE_BACKUP_SUFFIX` 已在 0.4.7 导出，本次接线）：
+  - **统计**：`locateSessionUsage` / `session-history-list` 每行新增 `backupBytes` /
+    `backupCount`——备份是 `bytes` 的子集，单列出来免得被当作日志体积误读；
+  - **清理**：`session-history-purge` 结果新增 `backupsRemoved`（整目录删除本就连带
+    备份，此处置个数让「备份一并处置」如实上报，不再是黑箱）。
+- 新增 6 条回归（后缀判定、统计单列、如实 0、清理上报、连带保留、列表带出），全套 167 测试。
+
+## 0.4.7
+
+### 新增 —— 插件署名格式体检门（source-kind）与旧署名转换
+
+- **背景**：宿主 0.1.7-rc.1 起（会话格式 v4）拒绝裸 `source: { kind: 'plugin', plugin }` 署名
+  （SessionFormatError，整轮失败）；genui 之外的未适配插件（session-guard、prime-memory 等）
+  已按清单修写路径，但存量日志里由它们写入的旧署名行仍在——未适配插件的读回判断会失配。
+- **检测（只读）**：体检新增第 6 门 `source-kind`，按日志 header 的格式代次分线：
+  - **版本依赖表**（详见 `src/host/health/source-kind.ts` 头注）：v1/v2 早期线（未考证）与
+    v3（0.1.6 时代，待考证）旧行合法、不动（宿主 v3→v4 迁移负责）；**v4（≥0.1.7-rc.1）拒绝
+    旧署名**，观测到即 warn。
+  - v4 之前的版本线记 ok 不抬档——不越权处理宿主迁移契约内的数据（防过度操作）。
+- **转换（显式触发）**：新增 API `session-health-source-migrate` 与体检面板「转换旧署名」按钮
+  （仅 source-kind 门 warn 时出现）。把 `{ kind: 'plugin', plugin: N }` 改写为
+  `{ kind: 'plugin:N' }`（删除 plugin 字段），其余字节原样保留。
+- **红线三闸**：只动 source 署名字段；改前整文件备份（`*.pre-sourcemigrate-<ts>`，可回退）；
+  完整性不合格（撕裂尾帧/解码失败/seq 缺口）或 header.version < 4 时拒绝执行。这是
+  「禁止改写会话日志」红线的唯一显式例外，经用户逐会话触发。
+- genui 不在掌控范围，本插件不做也不会替它转换（其历史行转换后由其读回判断自行失配与否自负）。
+
 ## 0.1.0-alpha.6
 
 ### 修复 —— 图标与文案间距收紧；窄栏下不再挤掉邻居

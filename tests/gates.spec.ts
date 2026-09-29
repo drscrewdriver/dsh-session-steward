@@ -179,7 +179,8 @@ describe('报告聚合', () => {
     // 未加载的会话既无热态投影、也无投影缓存记录 → 两门 skipped。
     // 修复前这两门记 warn，导致**所有**未加载会话恒为「注意」，信号淹没。
     const report = buildSessionReport({ sessionId: 's1', log: healthyLog(), now: () => 42 })
-    expect(report.gates).toHaveLength(5)
+    // 六门：generation / log-integrity / projection-cache / lossless-json / cold-read / source-kind。
+    expect(report.gates).toHaveLength(6)
     expect(report.gates.filter(gate => gate.level === 'skipped').length).toBeGreaterThan(0)
     expect(report.gates.some(gate => gate.level === 'warn')).toBe(false)
     expect(report.level).toBe('ok')

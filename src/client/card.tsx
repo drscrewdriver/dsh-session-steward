@@ -7,7 +7,8 @@
  *
  * 读写走 configForms（`configForms.get(STEWARD_ENTRY_ID)`，以本插件 entry 为键；
  * 旧宿主回退 settingsScope 绑定）的显式 `set`。0.1.7 起本卡挂在插件族共用
- * tab（`dsh-family.tab`，dsh-thinking-levels 顶级「起子插件设置」节声明）里。
+ * 设置节（`dsh-family.tab`，dsh-thinking-levels 顶级「起子插件设置」节声明）里，
+ * 与同节其它抽屉一样默认展开。
  */
 import { createElement, useState, useSyncExternalStore, type JSX } from 'react'
 import { DEFAULT_CONFIG, type StewardConfig } from '../config.ts'
@@ -90,13 +91,13 @@ function Header(props: { t?: CardTranslate; open: boolean; onToggle: () => void 
   ])
 }
 
-/** 插件设置卡主体（抽屉）。默认收起，与「插件」分区内其它卡片一致。 */
+/** 插件设置卡主体（抽屉）。默认展开，family 设置节内直接呈现完整面板。 */
 export function StewardSettingsCard({ t, scope }: StewardCardProps): JSX.Element {
   const snapshot = useSyncExternalStore(
     (listener) => scope.subscribe(listener),
     () => scope.getSnapshot(),
   )
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const value: Partial<StewardConfig> = snapshot.value ?? {}
   const writable = snapshot.writable
 
