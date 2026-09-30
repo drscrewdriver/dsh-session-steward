@@ -14,7 +14,7 @@ import {
   type StewardConfig,
 } from '../config.ts'
 import { StewardCardScope, StewardSettingsCard, type CardTranslate } from './card.tsx'
-import { en, translate, zh, type LocaleKey } from './locales.ts'
+import { de, en, es, fr, it, ru, translate, zh, type LocaleKey } from './locales.ts'
 import { StewardFooter, StewardPanel, TAB_HEALTH, TAB_HISTORY } from './panel.tsx'
 
 export { STEWARD_ENTRY_ID, STEWARD_SETTINGS_NAMESPACE, TAB_HEALTH, TAB_HISTORY }
@@ -34,7 +34,10 @@ interface StewardSlotsService {
 
 /** locale 服务面。 */
 interface StewardLocaleService {
-  register(ns: string, dictionaries: { zh: unknown; en: unknown }): () => void
+  register(
+    ns: string,
+    dictionaries: { zh: unknown; en: unknown; fr?: unknown; de?: unknown; it?: unknown; ru?: unknown; es?: unknown },
+  ): () => void
 }
 
 /** 旧宿主设置服务面（0.1.7 前的回退路径，结构化镜像）。 */
@@ -172,7 +175,7 @@ export function apply(ctx: Context): void {
 
   const locale = ctx.get('locale') as StewardLocaleService | undefined
   if (locale !== undefined && typeof locale.register === 'function') {
-    ctx.effect(() => locale.register(NS, { zh, en }), 'dsh-session-steward: dictionaries')
+    ctx.effect(() => locale.register(NS, { zh, en, fr, de, it, ru, es }), 'dsh-session-steward: dictionaries')
   }
 
   // 0.1.7：configForms 以 entry id 取句柄；旧宿主回退到按命名空间绑定。
