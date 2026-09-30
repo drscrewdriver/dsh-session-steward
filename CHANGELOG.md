@@ -1,5 +1,14 @@
 # Changelog
 
+- [Changelog](./CHANGELOG.md)
+- [日本語 changelog](./CHANGELOG.ja.md)
+- [한국어 changelog](./CHANGELOG.ko.md)
+- [Français changelog](./CHANGELOG.fr.md)
+- [Deutsch changelog](./CHANGELOG.de.md)
+- [Italiano changelog](./CHANGELOG.it.md)
+- [Русский changelog](./CHANGELOG.ru.md)
+- [Español changelog](./CHANGELOG.es.md)
+
 ## 0.5.0
 
 ### 适配 —— DSH 0.2.0 线（compat/0.2.0 分支，纯元数据适配，代码零修改）

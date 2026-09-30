@@ -1,5 +1,15 @@
 # dsh-session-steward（セッション・スチュワード）
 
+- [中文 README](./README.md)
+- [English README](./README.en.md)
+- [日本語 README](./README.ja.md)
+- [한국어 README](./README.ko.md)
+- [Français README](./README.fr.md)
+- [Deutsch README](./README.de.md)
+- [Italiano README](./README.it.md)
+- [Русский README](./README.ru.md)
+- [Español README](./README.es.md)
+
 **セッション履歴ファイル**と**セッション健康チェック**のための DSH Web プラグインです。セッションデータそのものには一切触れません。
 
 > **本版（0.5.0）は DSH 0.2.0 線がメインラインです**（peer/engines `>=0.2.0-rc.1 <0.2.1-0`、npm dist-tag `dsh-0.2.0`、ブランチ `compat/0.2.0`）。DSH 0.1.7 線は 0.4.8（dist-tag `dsh-0.1.7`、ブランチ `compat/0.1.7`）が担当します。本プラグインが消費するホスト面（セッション V4 形式と `dsh-session-format-v3-to-v4` の第一方プロデューサ名簿、`dsh-session` のデコード導出面、アーカイブ配置 `session.jsonl.zstd`/`session.v3.jsonl.zstd` + `storages/session_projcache` + `workspace.json` の 2 つの id 名簿）は 0.2.0-rc.1 で変更ないことを検証済み — **コード変更ゼロ**、メタデータのみの対応です。

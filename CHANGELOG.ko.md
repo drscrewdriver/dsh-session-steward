@@ -1,5 +1,14 @@
 # 변경 이력
 
+- [Changelog](./CHANGELOG.md)
+- [日本語 changelog](./CHANGELOG.ja.md)
+- [한국어 changelog](./CHANGELOG.ko.md)
+- [Français changelog](./CHANGELOG.fr.md)
+- [Deutsch changelog](./CHANGELOG.de.md)
+- [Italiano changelog](./CHANGELOG.it.md)
+- [Русский changelog](./CHANGELOG.ru.md)
+- [Español changelog](./CHANGELOG.es.md)
+
 ## 0.5.0
 
 ### 대응 —— DSH 0.2.0 라인(compat/0.2.0 브랜치, 메타데이터만 변경 · 코드 수정 없음)

@@ -1,5 +1,14 @@
 # 変更履歴
 
+- [Changelog](./CHANGELOG.md)
+- [日本語 changelog](./CHANGELOG.ja.md)
+- [한국어 changelog](./CHANGELOG.ko.md)
+- [Français changelog](./CHANGELOG.fr.md)
+- [Deutsch changelog](./CHANGELOG.de.md)
+- [Italiano changelog](./CHANGELOG.it.md)
+- [Русский changelog](./CHANGELOG.ru.md)
+- [Español changelog](./CHANGELOG.es.md)
+
 ## 0.5.0
 
 ### 対応 —— DSH 0.2.0 線（compat/0.2.0 ブランチ、メタデータのみ・コード変更ゼロ）

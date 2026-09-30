@@ -1,5 +1,15 @@
 # dsh-session-steward（会话管家 / Session Steward）
 
+- [中文 README](./README.md)
+- [English README](./README.en.md)
+- [日本語 README](./README.ja.md)
+- [한국어 README](./README.ko.md)
+- [Français README](./README.fr.md)
+- [Deutsch README](./README.de.md)
+- [Italiano README](./README.it.md)
+- [Русский README](./README.ru.md)
+- [Español README](./README.es.md)
+
 DSH Web 插件：**会话历史文件 + 会话健康检查**。
 
 > **本版（0.5.0）以 DSH 0.2.0 为主线**（peer/engines = `>=0.2.0-rc.1 <0.2.1-0`，npm dist-tag `dsh-0.2.0`，分支 `compat/0.2.0`）。

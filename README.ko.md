@@ -1,5 +1,15 @@
 # dsh-session-steward (세션 스튜어드)
 
+- [中文 README](./README.md)
+- [English README](./README.en.md)
+- [日本語 README](./README.ja.md)
+- [한국어 README](./README.ko.md)
+- [Français README](./README.fr.md)
+- [Deutsch README](./README.de.md)
+- [Italiano README](./README.it.md)
+- [Русский README](./README.ru.md)
+- [Español README](./README.es.md)
+
 **세션 히스토리 파일**과 **세션 상태 점검**을 위한 DSH 웹 플러그인입니다. 세션 데이터 자체는 건드리지 않습니다.
 
 > **이 버전(0.5.0)은 DSH 0.2.0 라인이 메인입니다**(peer/engines `>=0.2.0-rc.1 <0.2.1-0`, npm dist-tag `dsh-0.2.0`, 브랜치 `compat/0.2.0`). DSH 0.1.7 라인은 0.4.8(dist-tag `dsh-0.1.7`, 브랜치 `compat/0.1.7`)이 계속 지원합니다. 이 플러그인이 소비하는 호스트 표면(세션 V4 포맷과 `dsh-session-format-v3-to-v4`의 퍼스트파티 프로듀서 목록, `dsh-session` 디코드 익스포트, 아카이브 레이아웃 `session.jsonl.zstd`/`session.v3.jsonl.zstd` + `storages/session_projcache` + `workspace.json`의 두 id 목록)이 0.2.0-rc.1에서 변하지 않았음을 검증했습니다 — **코드 변경 없음**, 메타데이터만 갱신되었습니다.
