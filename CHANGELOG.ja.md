@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— サイドバー footer の行間を圧縮し中央揃えを強制（サードパーティ製エントリの補正を含む）
+
+- **コンテナ行**：`sidebar.footer.action` 規約を更新——`justify-content:center` で行内の全エントリ（サードパーティ製を含む）を中央揃えにし、`row-gap` は 2px → 0。
+- **本プラグインのエントリ**：ボタン高 42px → 32px（上下余白 10px → 5px）、左右 padding を対称化 `0 10px`（行中央揃え時の 1px の視覚的偏りを解消）。footer 2 行の合計高さ 86px → 64px。折りたたみレール形態は変更なし。
+- **サードパーティ補正**：dsh-context「コンテキストインサイト」（`.lc-ov-entry`、行独占設計・左寄せ）を `!important` で規約に強制整合：1 行独占・中央揃え・32px。`:not(.lc-ov-entry-rail)` でレール形態の 36px 丸ボタンを除外。クラス名はハードコードでバージョン間安定（0.56.1 / 0.60.0 で検証）。
 ## 0.5.0
 
 ### 対応 —— DSH 0.2.0 線（compat/0.2.0 ブランチ、メタデータのみ・コード変更ゼロ）

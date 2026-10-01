@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— Compactage de l'interlignage du footer de la barre latérale et centrage forcé (correctif des entrées tierces inclus)
+
+- **Ligne conteneur** : convention `sidebar.footer.action` mise à jour — `justify-content:center` centre toutes les entrées de la ligne (tierces comprises), `row-gap` 2px → 0.
+- **Entrée de ce plugin** : hauteur du bouton 42px → 32px (marges verticales 10px → 5px), padding horizontal symétrisé `0 10px` (supprime le décalage visuel de 1px au centrage). Hauteur totale des deux lignes du footer : 86px → 64px. La forme rail repliée est inchangée.
+- **Correctif tiers** : dsh-context « Aperçu du contexte » (`.lc-ov-entry`, conçu pour occuper toute la ligne, aligné à gauche) est forcé à la convention via `!important` : une ligne entière, centré, 32px. ` :not(.lc-ov-entry-rail)` exclut le bouton rond 36px de la forme rail. Noms de classe codés en dur, stables entre versions (vérifié 0.56.1 / 0.60.0).
 ## 0.5.0
 
 ### Adaptation — ligne DSH 0.2.0 (branche compat/0.2.0, adaptation de purs métadonnées, zéro modification de code)

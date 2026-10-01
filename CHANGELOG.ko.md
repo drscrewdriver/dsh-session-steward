@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— 사이드바 footer 행간 압축 및 중앙 정렬 강제 (서드파티 항목 보정 포함)
+
+- **컨테이너 행**: `sidebar.footer.action` 규약 업데이트 — `justify-content:center` 로 행 내 모든 항목(서드파티 포함)을 중앙 정렬하고, `row-gap` 2px → 0.
+- **본 플러그인 항목**: 버튼 높이 42px → 32px (상하 여백 10px → 5px), 좌우 padding 대칭화 `0 10px` (행 중앙 정렬 시 1px 시각적 편향 해소). footer 두 행의 총 높이 86px → 64px. 접힌 레일 형태는 변경 없음.
+- **서드파티 보정**: dsh-context "컨텍스트 인사이트"(`.lc-ov-entry`, 행 독점 설계·좌측 정렬)를 `!important` 로 규약에 강제 정렬: 한 행 독점·중앙 정렬·32px. `:not(.lc-ov-entry-rail)` 로 레일 형태의 36px 원형 버튼은 제외. 클래스명은 하드코딩으로 버전 간 안정 (0.56.1 / 0.60.0 검증).
 ## 0.5.0
 
 ### 대응 —— DSH 0.2.0 라인(compat/0.2.0 브랜치, 메타데이터만 변경 · 코드 수정 없음)

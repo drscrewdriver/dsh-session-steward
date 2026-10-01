@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— Compactación del interlineado del pie de la barra lateral y centrado forzado (incluye la corrección de la entrada de terceros)
+
+- **Fila contenedora**: convención `sidebar.footer.action` actualizada — `justify-content:center` centra todas las entradas de la fila (terceros incluidos), `row-gap` 2px → 0.
+- **Entrada propia**: altura del botón 42px → 32px (margen vertical 10px → 5px), padding horizontal simetrizado `0 10px` (elimina el desfase visual de 1px al centrar la fila). Altura total de las dos filas del pie: 86px → 64px; la forma rail plegada no cambia.
+- **Corrección de terceros**: dsh-context «Perspectiva de contexto» (`.lc-ov-entry`, diseñada para ocupar toda la fila, alineada a la izquierda) se fuerza a la convención con `!important`: fila propia, centrado, 32px. `:not(.lc-ov-entry-rail)` excluye el botón redondo de 36px de la forma rail. Nombres de clase codificados en el código fuente, estables entre versiones (verificado 0.56.1 / 0.60.0).
 ## 0.5.0
 
 ### Adaptación — línea DSH 0.2.0 (rama compat/0.2.0, adaptación de puros metadatos, cero modificaciones de código)

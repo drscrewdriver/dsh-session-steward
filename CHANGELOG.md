@@ -9,6 +9,12 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— 侧栏 footer 收紧行距并强制居中（含第三方入口矫正）
+
+- **容器行**：`sidebar.footer.action` 槽位公约升级——`justify-content:center` 统一居中行内所有入口（含第三方），`row-gap` 2px → 0。
+- **本插件入口**：按钮高 42px → 32px（上下裕度 10px → 5px），左右 padding 对称化 `0 10px`（消除整行居中时的 1px 视觉偏心）。两行 footer 总高 86px → 64px；收起轨道形态不变。
+- **第三方矫正**：dsh-context「上下文洞察」（`.lc-ov-entry`，按独占整行设计、内容靠左）以 `!important` 强制对齐公约：独占一行、行内居中、32px 高；`:not(.lc-ov-entry-rail)` 排除收起轨道的 36px 圆钮。类名为 dsh-context 源码硬编码、跨版本稳定（实测 0.56.1 / 0.60.0）。
+
 ## 0.5.0
 
 ### 适配 —— DSH 0.2.0 线（compat/0.2.0 分支，纯元数据适配，代码零修改）

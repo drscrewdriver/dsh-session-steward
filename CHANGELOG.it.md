@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— Riduzione dell'interlinea del footer della barra laterale e centraggio forzato (inclusa la correzione delle voci di terze parti)
+
+- **Riga contenitore**: convenzione `sidebar.footer.action` aggiornata — `justify-content:center` centra tutte le voci della riga (terze parti incluse), `row-gap` 2px → 0.
+- **Voce di questo plugin**: altezza pulsante 42px → 32px (margine verticale 10px → 5px), padding orizzontale simmetrizzato `0 10px` (elimina lo scostamento visivo di 1px nel centraggio). Altezza totale delle due righe del footer 86px → 64px; la forma rail compressa è invariata.
+- **Correzione di terze parti**: dsh-context «Panoramica del contesto» (`.lc-ov-entry`, progettata per occupare l'intera riga, allineata a sinistra) è forzata alla convenzione con `!important`: riga intera, centrata, 32px. `:not(.lc-ov-entry-rail)` esclude il pulsante tondo da 36px della forma rail. Nomi di classe hardcoded, stabili tra versioni (verificato 0.56.1 / 0.60.0).
 ## 0.5.0
 
 ### Adattamento — linea DSH 0.2.0 (ramo compat/0.2.0, adattamento di soli metadati, zero modifiche al codice)

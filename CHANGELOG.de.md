@@ -9,6 +9,11 @@
 - [Русский changelog](./CHANGELOG.ru.md)
 - [Español changelog](./CHANGELOG.es.md)
 
+## 0.5.1 —— Fußzeilen der Seitenleiste: Zeilenabstand verdichtet und Zentrierung erzwungen (inkl. Korrektur von Drittanbieter-Einträgen)
+
+- **Containerzeile**: Konvention `sidebar.footer.action` aktualisiert — `justify-content:center` zentriert alle Einträge der Zeile (Drittanbieter eingeschlossen), `row-gap` 2px → 0.
+- **Eigener Eintrag**: Schaltflächenhöhe 42px → 32px (vertikaler Spielraum 10px → 5px), horizontales Padding symmetrisiert `0 10px` (beseitigt den visuellen 1px-Versatz bei Zeilenzentrierung). Gesamthöhe der zwei Footer-Zeilen 86px → 64px; die eingeklappte Rail-Form bleibt unverändert.
+- **Drittanbieter-Korrektur**: dsh-context „Kontexteinblick“ (`.lc-ov-entry`, auf Zeilenmonopol ausgelegt, linksbündig) wird per `!important` auf die Konvention gezwungen: eigene Zeile, zentriert, 32px. `:not(.lc-ov-entry-rail)` schließt den 36px-Rundknopf der Rail-Form aus. Klassennamen sind fest codiert und versionsstabil (verifiziert 0.56.1 / 0.60.0).
 ## 0.5.0
 
 ### Anpassung — DSH-0.2.0-Linie (Branch compat/0.2.0, reine Metadaten-Anpassung, null Codeänderungen)
