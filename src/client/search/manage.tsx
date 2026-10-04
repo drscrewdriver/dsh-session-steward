@@ -59,6 +59,10 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   // 收藏（R6）:host 侧 JSON 域,挂载取一次,星标切换就地更新。
   const [favorites, setFavorites] = useState<ReadonlySet<string>>(new Set())
   const [favoritesOnly, setFavoritesOnly] = useState(false)
+  // workspace 定位（Quest 板布局）:'' = 全部;选中的组单独显示。文本框过滤标题/路径。
+  const [workspaceFilter, setWorkspaceFilter] = useState('')
+  const [textFilter, setTextFilter] = useState('')
+  const [showAllWorkspaces, setShowAllWorkspaces] = useState(false)
 
   // 收藏集合:挂载取一次。
   useEffect(() => {
@@ -102,6 +106,7 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
       if (domain === 'active' && item.archived === true) continue
       if (domain === 'archived' && item.archived !== true) continue
       if (favoritesOnly && !favorites.has(item.sessionId)) continue
+      if (workspaceFilter !== '' && item.cwd !== workspaceFilter) continue
       const list = byCwd.get(item.cwd)
       if (list === undefined) byCwd.set(item.cwd, [item])
       else list.push(item)
@@ -109,7 +114,39 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     return [...byCwd.entries()]
       .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
       .map(([cwd, items]) => ({ cwd, items }))
-  }, [sessions, domain, favoritesOnly, favorites])
+  }, [sessions, domain, favoritesOnly, favorites, workspaceFilter])
+
+  /** workspace chip 数据:全部/各 workspace 计数,按计数降序,未分组最后。 */
+  const workspaceChips = useMemo<{ cwd: string; label: string; count: number }[]>(() => {
+    if (sessions === null) return []
+    const counts = new Map<string, number>()
+    for (const item of sessions) {
+      if (domain === 'active' && item.archived === true) continue
+      if (domain === 'archived' && item.archived !== true) continue
+      if (favoritesOnly && !favorites.has(item.sessionId)) continue
+      counts.set(item.cwd, (counts.get(item.cwd) ?? 0) + 1)
+    }
+    return [...counts.entries()]
+      .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || (b[1] - a[1]))
+      .map(([cwd, count]) => ({
+        cwd,
+        count,
+        label: cwd === '' ? translate(t, 'manage.group.nocwd') : (cwd.split(/[\/]/).pop() ?? cwd),
+      }))
+  }, [sessions, domain, favoritesOnly, favorites, t])
+
+  /** chip 折叠:默认最多 8 个,超出折叠进「还有 N 个」。 */
+  const visibleChips = useMemo(() => {
+    if (showAllWorkspaces) return { chips: workspaceChips, hidden: 0 }
+    return { chips: workspaceChips.slice(0, 8), hidden: Math.max(0, workspaceChips.length - 8) }
+  }, [workspaceChips, showAllWorkspaces])
+
+  /** 文本过滤:标题/cwd 子串,大小写折叠。 */
+  const matchesText = (item: HostSessionItem): boolean => {
+    const needle = textFilter.trim().toLowerCase()
+    if (needle === '') return true
+    return item.title.toLowerCase().includes(needle) || item.cwd.toLowerCase().includes(needle)
+  }
 
   /** 批量动作;删除两步确认。 */
   const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
@@ -170,11 +207,48 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   if (sessions === null) {
     return createElement('div', { className: 'dsws_status' }, translate(t, 'panel.loadingSessions'))
   }
+  if (sessions !== null && manageGroups.length === 0 && (workspaceFilter !== '' || textFilter.trim() !== '' || domain !== 'all' || favoritesOnly)) {
+    return createElement('div', { className: 'dsws_empty' }, translate(t, 'panel.noMatch'))
+  }
   if (manageGroups.length === 0) {
     return createElement('div', { className: 'dsws_empty' }, translate(t, 'panel.noSessions'))
   }
 
   const children: ReactElement[] = [
+    createElement('input', {
+      key: 'search',
+      className: 'dsws_search',
+      style: { margin: '8px 10px 0', flex: 'none' },
+      type: 'text',
+      placeholder: translate(t, 'manage.search'),
+      value: textFilter,
+      onChange: (e: { target: { value: string } }) => { setTextFilter(e.target.value) },
+    }),
+    createElement('div', { key: 'wsChips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'workspace.label') }, [
+      createElement('span', { key: 'label', style: { flex: 'none', fontSize: '12px', color: 'var(--dsw-alias-label-caption)' } }, translate(t, 'workspace.label')),
+      createElement('button', {
+        key: 'all',
+        type: 'button',
+        className: `dsws_chip${workspaceFilter === '' ? ' dsws_chipActive' : ''}`,
+        'aria-pressed': workspaceFilter === '',
+        onClick: () => { setWorkspaceFilter('') },
+      }, `${translate(t, 'domain.all')} (${sessions?.length ?? 0})`),
+      ...visibleChips.chips.map(chip => createElement('button', {
+        key: chip.cwd === '' ? '(nocwd)' : chip.cwd,
+        type: 'button',
+        className: `dsws_chip${workspaceFilter === chip.cwd ? ' dsws_chipActive' : ''}`,
+        'aria-pressed': workspaceFilter === chip.cwd,
+        onClick: () => { setWorkspaceFilter(current => (current === chip.cwd ? '' : chip.cwd)) },
+      }, `${chip.label} (${chip.count})`)),
+      visibleChips.hidden > 0 && createElement('button', {
+        key: 'more', type: 'button', className: 'dsws_chip',
+        onClick: () => { setShowAllWorkspaces(true) },
+      }, translate(t, 'workspace.more', { n: visibleChips.hidden })),
+      showAllWorkspaces && workspaceChips.length > 8 && createElement('button', {
+        key: 'less', type: 'button', className: 'dsws_chip',
+        onClick: () => { setShowAllWorkspaces(false) },
+      }, translate(t, 'workspace.less')),
+    ]),
     createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
       ...(['all', 'active', 'archived'] as const).map(id => createElement('button', {
         key: id,
@@ -211,9 +285,9 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
               onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
             })),
           createElement('span', { key: 'title', className: 'dsws_groupTitle' }, group.cwd === '' ? translate(t, 'manage.group.nocwd') : group.cwd),
-          createElement('span', { key: 'count', className: 'dsws_groupCount' }, `${group.items.length}`),
+          createElement('span', { key: 'count', className: 'dsws_groupCount' }, `${group.items.filter(item => matchesText(item)).length}/${group.items.length}`),
         ]),
-        ...group.items.map(item => createElement('button', {
+        ...group.items.filter(item => matchesText(item)).map(item => createElement('button', {
           key: item.sessionId,
           type: 'button',
           className: 'dsws_row',

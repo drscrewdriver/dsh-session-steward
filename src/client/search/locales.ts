@@ -111,6 +111,10 @@ export const zh = {
   'date.to': '结束日期',
   'star.on': '取消收藏',
   'star.off': '收藏',
+  'workspace.label': '工作区',
+  'workspace.more': '还有 {n} 个',
+  'workspace.less': '收起',
+  'manage.search': '搜索会话…',
 } as const
 
 export type LocaleKey = keyof typeof zh
@@ -219,6 +223,10 @@ export const en: Dict = {
   'date.to': 'To date',
   'star.on': 'Unfavorite',
   'star.off': 'Favorite',
+  'workspace.label': 'Workspace',
+  'workspace.more': '{n} more',
+  'workspace.less': 'Collapse',
+  'manage.search': 'Search sessions…',
 }
 
 /** Japanese dictionary. */

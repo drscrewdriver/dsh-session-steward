@@ -4,3 +4,4 @@ node_modules/
 .vitest/
 *.tsbuildinfo
 _wt-audit/
+_patch_manage.py
