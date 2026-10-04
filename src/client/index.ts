@@ -104,7 +104,7 @@ function injectStyles(): () => void {
 .dss_footerIcon{flex:none;font-size:15px;line-height:1}
 .dss_footerLabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dss_backdrop{position:fixed;inset:0;background:rgba(15,20,30,.42);z-index:1000}
-.dss_panel{position:fixed;z-index:1001;left:50%;top:8vh;transform:translateX(-50%);width:min(760px,92vw);max-height:78vh;overflow:auto;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.18);padding:10px 14px 14px}
+.dss_panel{position:fixed;z-index:1001;left:50%;top:6vh;transform:translateX(-50%);width:min(860px,94vw);max-height:86vh;overflow:auto;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,#e5e7eb);border-radius:14px;box-shadow:0 18px 48px rgba(0,0,0,.18);padding:10px 14px 14px}
 .dss_dialogHead{display:flex;align-items:center;gap:10px;min-height:34px}
 .dss_dialogTitle{font-weight:600;color:var(--dsw-alias-label-primary,#111827);flex:1 1 auto;min-width:0}
 .dss_tabRow{display:inline-flex;gap:4px}
@@ -237,7 +237,7 @@ export function apply(ctx: Context): void {
   // 侧边栏入口：一个按钮，打开「养老院 / 体检」双页签面板。
   slots.inject('sidebar.footer.action', () => slots.register(
     { name: 'sidebar.footer.action', id: STEWARD_ENTRY_ID, order: 6 },
-    (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound }),
+    (props: StewardFooterProps) => createElement(StewardEntry, { ...props, scope: bound, openSession: openSearchHit }),
   ), 'dsh-session-steward: sidebar footer entry')
 
   // 插件族共用设置 tab（dsh-thinking-levels 的顶级「起子插件设置」节声明该子
@@ -382,6 +382,7 @@ function StewardFamilySection(props: {
 export function StewardEntry(
   props: StewardFooterProps & {
     scope?: (StewardCardScope & { getSnapshot(): { value: StewardConfig | undefined } }) | undefined
+    openSession?: (sessionId: string) => void
   },
 ): ReactElement {
   const [open, setOpen] = useState(false)
@@ -392,7 +393,8 @@ export function StewardEntry(
   const config: StewardConfig = { ...DEFAULT_CONFIG, ...(snapshot.value ?? {}) }
   const historyFiles = config.historyFiles !== false
   const healthCheck = config.healthCheck !== false
-  const visible = config.enabled !== false && (historyFiles || healthCheck)
+  const searchEnabled = config.search !== false
+  const visible = config.enabled !== false && (historyFiles || healthCheck || searchEnabled)
   const wide = props.wide === true
   // 入口文案与面板标题同源：字典是唯一出处，组件不再持有兜底中文。
   const label = translate(undefined, 'panel.title')
@@ -411,6 +413,8 @@ export function StewardEntry(
         key: 'panel',
         historyFiles,
         healthCheck,
+        searchEnabled,
+        openSession: props.openSession,
         onClose: () => { setOpen(false) },
       })
       : null,

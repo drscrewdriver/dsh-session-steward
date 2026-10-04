@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import type { SwitchSearchConfig } from '../../config.ts'
 // 0.1.7：插件族共用设置节（dsh-thinking-levels 持有并声明 `dsh-family.tab`
 // 子席位；本仓不依赖 ui-slots 类型包，席位键以运行时 children 表为准）。
-import {callHost, callHostAny, callSteward,  type HostContentHit, type HostIndexStatus, type HostSessionItem, type HostSortMode, type SwitchSessionsService, type SwitchUiWorkspaceService } from './host-api.ts'
+import { callHost, callHostAny, type HostContentHit, type HostIndexStatus, type HostSessionItem, type HostSortMode, type SwitchSessionsService, type SwitchUiWorkspaceService } from './host-api.ts'
 import type { SwitchCardScope } from './card.tsx'
 import { translate, type LocaleKey } from './locales.ts'
 import { LABELS, isInvokeChord } from './platform.ts'
@@ -86,8 +86,8 @@ type ContentType = 'all' | 'user' | 'reply' | 'tool'
 /** 检索域（R1：归档正文入索引后的 chip 维度）。 */
 type ArchivedDomain = 'all' | 'active' | 'archived'
 
-/** 面板模式：标题 / 内容 / 管理（批量台）。 */
-type PanelMode = 'title' | 'content' | 'manage'
+/** 面板模式：标题 / 内容（管理台归管家面板,见 search/manage.tsx）。 */
+type PanelMode = 'title' | 'content'
 
 /** The coarse filter chips rendered above content results. */
 const CONTENT_TYPE_CHIPS: readonly { id: ContentType; labelKey: LocaleKey }[] = [
@@ -287,20 +287,6 @@ const CSS = `
 .dsws_pillDots span:nth-child(3){animation-delay:1s}
 @keyframes dsws-reveal-dot{0%,32%{opacity:0}33%,100%{opacity:1}}
 @media (prefers-reduced-motion:reduce){.dsws_pillDots span{animation:none;opacity:1}}
-/* ── 批量管理台（manage 模式,面板放大后的第三页签）── */
-.dsws_manageList{flex:1 1 auto;min-height:0;overflow-y:auto;margin:8px 0 0;padding:0 6px 8px}
-.dsws_group{margin-bottom:6px}
-.dsws_groupHead{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--dsw-specific-tip);border-bottom:1px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none}
-.dsws_groupTitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary)}
-.dsws_groupCount{flex:none;color:var(--dsw-alias-label-caption);font-size:11px;font-variant-numeric:tabular-nums}
-.dsws_check{flex:none;display:inline-flex;align-items:center}
-.dsws_check input{width:13px;height:13px;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}
-.dsws_tagArch{flex:none;color:var(--dsw-alias-state-warn-label,var(--dsw-alias-label-caption));font-size:10px;line-height:16px;border:1px solid currentColor;border-radius:999px;padding:0 6px;white-space:nowrap}
-.dsws_batchBar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
-.dsws_batchInfo{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
-.dsws_btnDanger{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
-.dsws_hint{color:var(--dsw-alias-label-caption);font-size:11px;line-height:16px;padding:2px 10px 6px}
-.dsws_manageHint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;padding:8px 10px 0}
 `
 
 /** Inject the plugin stylesheet once per activation (removed on disposal). */
@@ -336,16 +322,11 @@ function SwitchPanel({
   const setMode = (next: PanelMode): void => {
     lastPanelMode = next
     setModeState(next)
-    setConfirmPurge(false)
   }
   const [query, setQuery] = useState('')
   const [contentType, setContentType] = useState<ContentType>('all')
   // 检索域 chip：标题/内容两模式共用（R1——归档正文已入索引）。
   const [archivedFilter, setArchivedFilter] = useState<ArchivedDomain>('all')
-  // 管理台：勾选集合与批量动作状态。
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [batch, setBatch] = useState<{ busy: boolean; message: string; ok: boolean }>({ busy: false, message: '', ok: true })
-  const [confirmPurge, setConfirmPurge] = useState(false)
   const [sortBy, setSortByState] = useState<HostSortMode>(readStoredSort)
   const setSortBy = (next: HostSortMode): void => {
     writeStoredSort(next)
@@ -365,7 +346,8 @@ function SwitchPanel({
     rebuilding: boolean
     done: number
     total: number
-  }>({ available: null, rebuilding: false, done: 0, total: 0 })
+    count: number
+  }>({ available: null, rebuilding: false, done: 0, total: 0, count: 0 })
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLUListElement | null>(null)
 
@@ -382,7 +364,7 @@ function SwitchPanel({
         if (!res.ok) {
           // Old host half without this route (browser refresh keeps the old
           // process): show an actionable state instead of a blank panel.
-          setSearchStatus({ available: false, reason: 'unreachable', rebuilding: false, done: 0, total: 0 })
+          setSearchStatus({ available: false, reason: 'unreachable', rebuilding: false, done: 0, total: 0, count: 0 })
           return
         }
         const status = res as HostIndexStatus
@@ -393,6 +375,7 @@ function SwitchPanel({
           rebuilding,
           done: status.rebuild?.done ?? 0,
           total: status.rebuild?.total ?? 0,
+          count: status.sync?.indexed ?? 0,
         })
         if (rebuilding) timer = window.setTimeout(probe, 1500)
       })
@@ -409,14 +392,13 @@ function SwitchPanel({
     void callHostAny<HostIndexStatus>('index-rebuild', {})
   }
 
-  // Load the title-search corpus once on open (and after every batch op:
-  // setSessions(null) from runBatch retriggers this effect).
+  // Load the title-search corpus once on open.
   useEffect(() => {
     if (sessions !== null) return
     let cancelled = false
     callHost<HostSessionItem>('list-sessions', {}).then((res) => {
       if (cancelled) return
-      if (res.ok) { setSessions(res.items); setSelected(new Set()); setConfirmPurge(false) }
+      if (res.ok) { setSessions(res.items); setSessionsError(null) }
       else setSessionsError(res.error ?? '读取会话列表失败')
     })
     return () => { cancelled = true }
@@ -480,132 +462,13 @@ function SwitchPanel({
       || item.cwd.toLowerCase().includes(normalized))
   }, [sessions, normalized, archivedFilter])
 
-  // Manage-mode groups: workspace (cwd) → rows, 未分组 at the end.
-  const manageGroups = useMemo<{ cwd: string; items: HostSessionItem[] }[]>(() => {
-    if (sessions === null) return []
-    const byCwd = new Map<string, HostSessionItem[]>()
-    for (const item of sessions) {
-      const list = byCwd.get(item.cwd)
-      if (list === undefined) byCwd.set(item.cwd, [item])
-      else list.push(item)
-    }
-    return [...byCwd.entries()]
-      .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
-      .map(([cwd, items]) => ({ cwd, items }))
-  }, [sessions])
-
-  /**
-   * Batch operation against the steward subdomain. Delete is two-step
-   * (confirmPurge); success clears the selection and refetches the corpus
-   * (the host half already folded the index side of the operation).
-   */
-  const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
-    const ids = [...selected]
-    if (ids.length === 0 || batch.busy) return
-    if (kind === 'purge' && !confirmPurge) { setConfirmPurge(true); return }
-    setConfirmPurge(false)
-    setBatch({ busy: true, message: '', ok: true })
-    const method = kind === 'archive'
-      ? 'session-history-archive'
-      : kind === 'unarchive' ? 'session-history-prune' : 'session-history-purge'
-    void callSteward<{ added?: number; removed?: number; purged?: number }>(method, { sessionIds: ids }).then((res) => {
-      const message = !res.ok
-        ? translate(t, 'manage.done.error', { error: res.error ?? '?' })
-        : kind === 'archive'
-          ? translate(t, 'manage.done.archive', { n: res.added ?? ids.length })
-          : kind === 'unarchive'
-            ? translate(t, 'manage.done.unarchive', { n: res.removed ?? ids.length })
-            : translate(t, 'manage.done.purge', { n: res.purged ?? ids.length })
-      setBatch({ busy: false, message, ok: res.ok === true })
-      if (res.ok) {
-        setSelected(new Set())
-        // 重取语料：宿主半在成功路径上已同步联动索引(翻 flag/删行)。
-        setSessions(null)
-      }
-    })
-  }
-
-  const toggleOne = (sessionId: string): void => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(sessionId)) next.delete(sessionId)
-      else next.add(sessionId)
-      return next
-    })
-  }
-
-  const toggleGroup = (items: readonly HostSessionItem[]): void => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      const allIn = items.every(item => next.has(item.sessionId))
-      for (const item of items) {
-        if (allIn) next.delete(item.sessionId)
-        else next.add(item.sessionId)
-      }
-      return next
-    })
-  }
-
   const children: ReactElement[] = []
   if (sessionsError !== null) {
     children.push(createElement('div', { key: 'err', className: 'dsws_error' }, translate(t, 'panel.sessionsError', { error: sessionsError })))
   }
   const activeRequestKey = contentRequestKey(normalized, contentType, sortBy, archivedFilter)
   const activeContent = content.query === activeRequestKey ? content : { query: activeRequestKey, status: 'loading' as const, items: [] }
-  if (mode === 'manage') {
-    if (sessions === null) {
-      children.push(createElement('div', { key: 'loading', className: 'dsws_status' }, translate(t, 'panel.loadingSessions')))
-    } else if (manageGroups.length === 0) {
-      children.push(createElement('div', { key: 'empty', className: 'dsws_empty' }, translate(t, 'panel.noSessions')))
-    } else {
-      children.push(createElement('div', { key: 'hint', className: 'dsws_manageHint' }, [
-        translate(t, 'manage.hint'),
-        createElement('span', { key: 'sep', style: { display: 'block', marginTop: '2px' } }, translate(t, 'manage.restartHint')),
-      ]))
-      children.push(createElement('div', { key: 'groups', className: 'dsws_manageList' },
-        ...manageGroups.map(group => createElement('div', { key: group.cwd === '' ? '(nocwd)' : group.cwd, className: 'dsws_group' }, [
-          createElement('div', {
-            key: 'head',
-            className: 'dsws_groupHead',
-            title: translate(t, 'manage.selectGroup'),
-            onClick: () => { toggleGroup(group.items) },
-          }, [
-            createElement('span', { key: 'check', className: 'dsws_check' },
-              createElement('input', {
-                type: 'checkbox',
-                checked: group.items.length > 0 && group.items.every(item => selected.has(item.sessionId)),
-                onChange: () => { toggleGroup(group.items) },
-                onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
-              })),
-            createElement('span', { key: 'title', className: 'dsws_groupTitle' }, group.cwd === '' ? translate(t, 'manage.group.nocwd') : group.cwd),
-            createElement('span', { key: 'count', className: 'dsws_groupCount' }, `${group.items.length}`),
-          ]),
-          ...group.items.map(item => createElement('div', { key: item.sessionId, className: 'dsws_group' }, [
-            createElement('button', {
-              key: 'row',
-              type: 'button',
-              className: 'dsws_row',
-              onClick: () => { open(item.sessionId) },
-            }, [
-              createElement('span', { key: 'line', className: 'dsws_rowTitle' }, [
-                createElement('span', { key: 'check', className: 'dsws_check' },
-                  createElement('input', {
-                    type: 'checkbox',
-                    checked: selected.has(item.sessionId),
-                    onChange: () => { toggleOne(item.sessionId) },
-                    onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
-                  })),
-                createElement('span', { key: 'x', className: 'dsws_titleText' }, item.title || translate(t, 'panel.untitled')),
-                item.archived === true && createElement('span', { key: 'arch', className: 'dsws_tagArch' }, translate(t, 'tag.archived')),
-                createElement('span', { key: 'tag', className: 'dsws_tag' }, fmtTime(item.updatedAt)),
-              ]),
-              createElement('span', { key: 'meta', className: 'dsws_meta' }, item.cwd),
-            ]),
-          ])),
-        ])),
-      ))
-    }
-  } else if (mode === 'title') {
+  if (mode === 'title') {
     if (sessions === null) {
       children.push(createElement('div', { key: 'loading', className: 'dsws_status' }, translate(t, 'panel.loadingSessions')))
     } else if (titleRows.length === 0) {
@@ -708,14 +571,8 @@ function SwitchPanel({
             className: `dsws_modeBtn${mode === 'content' ? ' dsws_modeBtnActive' : ''}`,
             onClick: () => { setMode('content') },
           }, translate(t, 'panel.contentSearch')),
-          createElement('button', {
-            key: 'manage',
-            type: 'button',
-            className: `dsws_modeBtn${mode === 'manage' ? ' dsws_modeBtnActive' : ''}`,
-            onClick: () => { setMode('manage') },
-          }, translate(t, 'panel.manage')),
         ]),
-        mode !== 'manage' && createElement('input', {
+        createElement('input', {
           key: 'search',
           ref: inputRef,
           className: 'dsws_search',
@@ -725,7 +582,7 @@ function SwitchPanel({
           onChange: (e: { target: { value: string } }) => setQuery(e.target.value),
         }),
       ]),
-      mode !== 'manage' && createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
+      createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
         // 检索域 chips（全部/活跃/归档）在前——标题与内容两模式共用。
         ...ARCHIVED_CHIPS.map(chip => createElement('button', {
           key: chip.id,
@@ -755,30 +612,28 @@ function SwitchPanel({
             onClick: () => { setSortBy(chip.id) },
           }, translate(t, chip.labelKey))))] : []),
       ]),
-      mode === 'manage' && selected.size > 0 && createElement('div', { key: 'batch', className: 'dsws_batchBar' }, [
-        createElement('span', { key: 'info', className: 'dsws_batchInfo' }, batch.message !== ''
-          ? batch.message
-          : translate(t, 'manage.selected', { n: selected.size })),
-        createElement('button', {
-          key: 'archive', type: 'button', className: 'dsws_actBtn', disabled: batch.busy,
-          onClick: () => { runBatch('archive') },
-        }, translate(t, 'manage.batch.archive')),
-        createElement('button', {
-          key: 'unarchive', type: 'button', className: 'dsws_actBtn', disabled: batch.busy,
-          onClick: () => { runBatch('unarchive') },
-        }, translate(t, 'manage.batch.unarchive')),
-        createElement('button', {
-          key: 'purge', type: 'button', className: `dsws_actBtn dsws_btnDanger${confirmPurge ? ' dsws_chipActive' : ''}`, disabled: batch.busy,
-          onClick: () => { runBatch('purge') },
-        }, confirmPurge ? translate(t, 'manage.batch.confirm') : translate(t, 'manage.batch.delete')),
-        batch.busy && createElement('span', { key: 'busy', className: 'dsws_batchInfo' }, translate(t, 'manage.batch.working')),
-      ]),
       children,
       // The key bar. It advertises only chords that are actually bound: the
       // invoke chord (see `SwitchFooter`) and Escape (see the effect above).
       // A key cap for a key nothing listens to is a lie the user has to
       // discover by pressing it.
       createElement('div', { key: 'foot', className: 'dsws_panelFoot' }, [
+        createElement('span', { key: 'index', className: 'dsws_footItem' }, [
+          createElement('span', { key: 'label' }, searchStatus.rebuilding
+            ? translate(t, 'panel.index.rebuilding', { done: searchStatus.done, total: searchStatus.total || '?' })
+            : searchStatus.available === false
+              ? translate(t, 'panel.index.none')
+              : translate(t, 'panel.index.count', { n: searchStatus.count })),
+          createElement('button', {
+            key: 'rebuild',
+            type: 'button',
+            className: 'dsws_actBtn',
+            style: { height: '20px', padding: '0 8px', fontSize: '11px', lineHeight: '18px' },
+            disabled: searchStatus.rebuilding,
+            title: translate(t, 'card.index.rebuild.hint'),
+            onClick: startIndexBuild,
+          }, searchStatus.rebuilding ? translate(t, 'card.index.rebuilding.btn') : translate(t, 'card.index.rebuild')),
+        ]),
         createElement('span', { key: 'invoke', className: 'dsws_footItem' }, [
           createElement('kbd', { key: 'k', className: 'dsws_kbd' }, LABELS.invokeLabel),
           translate(t, 'panel.footer.invoke'),

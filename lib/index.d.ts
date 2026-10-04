@@ -1205,6 +1205,11 @@ declare class SwitchWatermarkSync {
   private readonly readArchiveSource?;
   private readonly log?;
   private readonly readSessionFromFile?;
+  /**
+   * 第三标题源（可选）:官方投影缓存里的 title 行。事件流没有 session/title
+   * 的老会话,快照服务又整片不可用时,这是最后兜底。
+   */
+  private readonly readProjectionTitle?;
   private running;
   private readonly state;
   /**
@@ -1220,7 +1225,12 @@ declare class SwitchWatermarkSync {
       cwd?: string;
     };
     events: readonly SwitchRawEvent[];
-  } | undefined>) | undefined);
+  } | undefined>) | undefined,
+  /**
+   * 第三标题源（可选）:官方投影缓存里的 title 行。事件流没有 session/title
+   * 的老会话,快照服务又整片不可用时,这是最后兜底。
+   */
+  readProjectionTitle?: ((sessionId: string) => string) | undefined);
   /**
    * 读取一个会话的日志:服务面优先,失败落文件兜底。两条路都失败时抛最后
    * 一个错误,由调用方按会话隔离记失败。

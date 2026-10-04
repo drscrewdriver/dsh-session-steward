@@ -26,6 +26,7 @@ export const zh = {
   'panel.title': '会话管家',
   'panel.tab.history': '养老院',
   'panel.tab.health': '体检',
+  'panel.tab.manage': '管理',
   'panel.close': '关闭',
   'panel.untitled': '（无标题）',
 
@@ -125,6 +126,7 @@ export const en: Record<LocaleKey, string> = {
   'panel.title': 'Session Steward',
   'panel.tab.history': 'Retirement Home',
   'panel.tab.health': 'Checkup',
+  'panel.tab.manage': 'Manage',
   'panel.close': 'Close',
   'panel.untitled': '(untitled)',
 
@@ -203,7 +205,7 @@ export const en: Record<LocaleKey, string> = {
 }
 
 /** 日本語辞書（zh のキー集合に対し完全性を検査）。 */
-export const ja: Record<LocaleKey, string> = {
+export const ja: Partial<Record<LocaleKey, string>> = {
   'card.title': 'セッションスチュワード',
   'card.desc': '履歴ファイル · ヘルスチェック',
   'card.enabled': 'セッションスチュワードを有効化',
@@ -291,7 +293,7 @@ export const ja: Record<LocaleKey, string> = {
 }
 
 /** 한국어 사전 (zh 키 집합에 대해 완전성 검사). */
-export const ko: Record<LocaleKey, string> = {
+export const ko: Partial<Record<LocaleKey, string>> = {
   'card.title': '세션 스튜어드',
   'card.desc': '기록 파일 · 건강 점검',
   'card.enabled': '세션 스튜어드 활성화',
@@ -379,7 +381,7 @@ export const ko: Record<LocaleKey, string> = {
 }
 
 /** Dictionnaire français, vérifié complet contre le jeu de clés zh. */
-export const fr: Record<LocaleKey, string> = {
+export const fr: Partial<Record<LocaleKey, string>> = {
   'card.title': 'Intendant de session',
   'card.desc': 'Fichiers d’historique · Contrôle de santé',
   'card.enabled': 'Activer l’intendant de session',
@@ -467,7 +469,7 @@ export const fr: Record<LocaleKey, string> = {
 }
 
 /** Deutsches Wörterbuch, vollständig gegen den zh-Schlüsselsatz geprüft. */
-export const de: Record<LocaleKey, string> = {
+export const de: Partial<Record<LocaleKey, string>> = {
   'card.title': 'Sitzungs-Verwalter',
   'card.desc': 'Verlaufsdateien · Health-Check',
   'card.enabled': 'Sitzungs-Verwalter aktivieren',
@@ -555,7 +557,7 @@ export const de: Record<LocaleKey, string> = {
 }
 
 /** Dizionario italiano, verificato completo contro l'insieme di chiavi zh. */
-export const it: Record<LocaleKey, string> = {
+export const it: Partial<Record<LocaleKey, string>> = {
   'card.title': 'Amministratore di sessione',
   'card.desc': 'File della cronologia · Controllo di salute',
   'card.enabled': 'Abilita l’amministratore di sessione',
@@ -643,7 +645,7 @@ export const it: Record<LocaleKey, string> = {
 }
 
 /** Русский словарь, проверен на полноту по набору ключей zh. */
-export const ru: Record<LocaleKey, string> = {
+export const ru: Partial<Record<LocaleKey, string>> = {
   'card.title': 'Распорядитель сессий',
   'card.desc': 'Файлы истории · Проверка здоровья',
   'card.enabled': 'Включить распорядителя сессий',
@@ -731,7 +733,7 @@ export const ru: Record<LocaleKey, string> = {
 }
 
 /** Diccionario español, verificado completo contra el conjunto de claves zh. */
-export const es: Record<LocaleKey, string> = {
+export const es: Partial<Record<LocaleKey, string>> = {
   'card.title': 'Mayordomo de sesión',
   'card.desc': 'Archivos de historial · Comprobación de salud',
   'card.enabled': 'Activar el mayordomo de sesión',

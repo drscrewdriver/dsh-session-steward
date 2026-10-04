@@ -8,6 +8,7 @@ import { createElement, useEffect, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { HistoryPanel } from './history-panel.tsx'
 import { HealthPanel } from './health-panel.tsx'
+import { ManageConsole } from './search/manage.tsx'
 import { translate, type LocaleKey } from './locales.ts'
 
 /** 面板字典面。 */
@@ -16,6 +17,7 @@ export type PanelTranslate = (key: LocaleKey, params?: Record<string, unknown>) 
 /** 页签 id（导出供测试断言）。 */
 export const TAB_HISTORY = 'dss-tab-history'
 export const TAB_HEALTH = 'dss-tab-health'
+export const TAB_MANAGE = 'dss-tab-manage'
 
 /** 面板入参。 */
 export interface StewardPanelProps {
@@ -24,18 +26,23 @@ export interface StewardPanelProps {
   historyFiles: boolean
   /** 健康检查子域是否可见。 */
   healthCheck: boolean
+  /** 搜索子域是否启用（启用才有「管理」页签——它读统一索引语料）。 */
+  searchEnabled?: boolean
+  /** 打开会话（管理台行点击;apply 侧经 openSessionThrough 解析）。 */
+  openSession?: (sessionId: string) => void
   onClose: () => void
 }
 
 /** 会话管家对话框。 */
-export function StewardPanel({ t, historyFiles, healthCheck, onClose }: StewardPanelProps): ReactElement {
-  const [tab, setTab] = useState<'history' | 'health'>(historyFiles ? 'history' : 'health')
+export function StewardPanel({ t, historyFiles, healthCheck, searchEnabled = false, openSession, onClose }: StewardPanelProps): ReactElement {
+  const [tab, setTab] = useState<'history' | 'health' | 'manage'>(historyFiles ? 'history' : healthCheck ? 'health' : 'manage')
 
   // 开关变化后收敛到仍然可见的页签。
   useEffect(() => {
-    if (tab === 'history' && !historyFiles && healthCheck) setTab('health')
-    if (tab === 'health' && !healthCheck && historyFiles) setTab('history')
-  }, [tab, historyFiles, healthCheck])
+    if (tab === 'history' && !historyFiles && (healthCheck || searchEnabled)) setTab(healthCheck ? 'health' : 'manage')
+    if (tab === 'health' && !healthCheck && (historyFiles || searchEnabled)) setTab(historyFiles ? 'history' : 'manage')
+    if (tab === 'manage' && !searchEnabled && historyFiles) setTab('history')
+  }, [tab, historyFiles, healthCheck, searchEnabled])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose() }
@@ -64,12 +71,25 @@ export function StewardPanel({ t, historyFiles, healthCheck, onClose }: StewardP
       onClick: () => { setTab('health') },
     }, translate(t, 'panel.tab.health')))
   }
+  if (searchEnabled) {
+    tabs.push(createElement('button', {
+      key: TAB_MANAGE,
+      id: TAB_MANAGE,
+      type: 'button',
+      className: `dss_tab${tab === 'manage' ? ' dss_tabActive' : ''}`,
+      'aria-selected': tab === 'manage',
+      onClick: () => { setTab('manage') },
+    }, translate(t, 'panel.tab.manage')))
+  }
 
   const body: ReactElement = tab === 'history' && historyFiles
     ? createElement(HistoryPanel, { t, onClose })
     : tab === 'health' && healthCheck
       ? createElement(HealthPanel, { t, onClose })
-      : createElement('div', { className: 'dss_empty' }, translate(t, 'card.enabled.desc'))
+      : tab === 'manage' && searchEnabled
+        ? createElement('div', { style: { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 } },
+            createElement(ManageConsole, { open: openSession ?? (() => {}) }))
+        : createElement('div', { className: 'dss_empty' }, translate(t, 'card.enabled.desc'))
 
   return createPortal(createElement('div', { key: 'steward-root' }, [
     createElement('div', { key: 'backdrop', className: 'dss_backdrop', onClick: onClose }),
@@ -78,6 +98,7 @@ export function StewardPanel({ t, historyFiles, healthCheck, onClose }: StewardP
       className: 'dss_panel',
       role: 'dialog',
       'aria-label': translate(t, 'panel.title'),
+      style: { display: 'flex', flexDirection: 'column' },
     }, [
       createElement('div', { key: 'head', className: 'dss_dialogHead' }, [
         createElement('span', { key: 'title', className: 'dss_dialogTitle' }, translate(t, 'panel.title')),

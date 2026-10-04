@@ -80,6 +80,11 @@ export class SwitchWatermarkSync {
       session: { id: string; version: number; createdAt?: number; cwd?: string }
       events: readonly SwitchRawEvent[]
     } | undefined>,
+    /**
+     * 第三标题源（可选）:官方投影缓存里的 title 行。事件流没有 session/title
+     * 的老会话,快照服务又整片不可用时,这是最后兜底。
+     */
+    private readonly readProjectionTitle?: (sessionId: string) => string,
   ) {
 
   }
@@ -207,6 +212,26 @@ export class SwitchWatermarkSync {
         }
       }
       await this.backfillTitles(changedIds)
+      // 空标题扫尾:重建行/老会话可能没有 session/title 事件,快照精修后仍空
+      // 的行用投影缓存兜底。每轮封顶 100 行,标题落地后集合自然收缩。
+      const emptyTitles = this.engine.listIndexedSessions()
+        .filter(session => session.title.trim() === '')
+        .map(session => session.sessionId)
+        .slice(0, 100)
+      if (emptyTitles.length > 0) {
+        await this.backfillTitles(emptyTitles)
+        let filled = 0
+        for (const id of emptyTitles) {
+          const row = this.engine.getSession(id)
+          if (row !== undefined && row.title.trim() !== '') continue
+          const fromProjection = this.readProjectionTitle?.(id) ?? ''
+          if (fromProjection.trim() !== '') {
+            this.engine.updateSessionHeader({ sessionId: id, title: fromProjection })
+            filled += 1
+          }
+        }
+        if (filled > 0) this.log?.(`title sweep: ${filled}/${emptyTitles.length} filled from projection cache`)
+      }
       this.state.updated = updated
       this.state.failures = failures
       this.state.indexed = this.engine.countSessions()

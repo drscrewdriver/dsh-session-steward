@@ -19,6 +19,7 @@
 import type { Context } from 'cordis'
 import z from '@deepseek-ai/schemastery'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -1035,6 +1036,22 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
     }
   }
 
+  // 投影缓存标题第三源:官方逐会话缓存文件 record.rows.title.val(与管家
+  // history 子域同一形状;读不到/畸形一律空串,绝不抛进同步)。
+  const readProjectionTitle = (sessionId: string): string => {
+    try {
+      const path = join(resolvedHome, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`)
+      if (!existsSync(path)) return ''
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+        record?: { rows?: { title?: { val?: unknown } } }
+      }
+      const value = parsed.record?.rows?.title?.val
+      return typeof value === 'string' ? value : ''
+    } catch {
+      return ''
+    }
+  }
+
   const indexState: SwitchIndexServiceState = {
     engine,
     archiveReader,
@@ -1047,7 +1064,7 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
       readTitleSnapshots: sessionQuery === undefined
         ? undefined
         : (ids) => sessionQuery.readTitleSnapshots(ids),
-    }, () => ({ archivedSessionIds: archiveReader.read().ids }), log, readSessionFromFile),
+    }, () => ({ archivedSessionIds: archiveReader.read().ids }), log, readSessionFromFile, readProjectionTitle),
     layout: indexLayout,
     rebuild: { state: 'idle', done: 0, total: 0, startedAt: 0, finishedAt: 0, failures: [] },
   }

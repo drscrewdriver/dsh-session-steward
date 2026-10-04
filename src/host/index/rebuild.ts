@@ -11,7 +11,7 @@ import { mkdir, readdir, rename, rm, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { SwitchIndexEngine } from './engine.ts'
-import type { SwitchRawEvent } from './extract.ts'
+import { extractTitleFromEvents, type SwitchRawEvent } from './extract.ts'
 import type { SwitchArchiveSource } from './sync.ts'
 
 /** The corpus reader a rebuild needs (same faces as the syncer). */
@@ -200,6 +200,9 @@ export async function rebuildIndex(
         return {
           sessionId: header.id,
           version: log.session.version,
+          // 标题基础层随重建落行(beta.5 教训:重建不抽标题 + 版本对齐后同步
+          // 永不重读 = 全库标题永久空缺)。
+          title: extractTitleFromEvents(log.events),
           cwd: log.session.cwd ?? '',
           updatedAt: log.session.createdAt ?? 0,
           archived: archivedSet.has(header.id),

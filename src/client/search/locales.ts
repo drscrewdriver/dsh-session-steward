@@ -101,6 +101,10 @@ export const zh = {
   'manage.done.unarchive': '已取消归档 {n} 个会话。',
   'manage.done.purge': '已清理 {n} 个会话。',
   'manage.done.error': '操作失败：{error}',
+  'panel.index.none': '索引未建立',
+  'panel.index.count': '索引 {n}',
+  'panel.index.rebuilding': '整理中 {done}/{total}',
+  'panel.index.rebuild': '整理',
 } as const
 
 export type LocaleKey = keyof typeof zh
@@ -199,6 +203,10 @@ export const en: Dict = {
   'manage.done.unarchive': 'Unarchived {n} sessions.',
   'manage.done.purge': 'Purged {n} sessions.',
   'manage.done.error': 'Operation failed: {error}',
+  'panel.index.none': 'Index not built',
+  'panel.index.count': 'Index {n}',
+  'panel.index.rebuilding': 'Rebuilding {done}/{total}',
+  'panel.index.rebuild': 'Rebuild',
 }
 
 /** Japanese dictionary. */
