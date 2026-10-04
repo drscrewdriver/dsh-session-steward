@@ -690,6 +690,37 @@ export async function handleIndexMethod(method: string, payload: unknown, srt: S
   return { ok: false, error: `未知的 switch-search API 方法 "${method}"` }
 }
 
+/**
+ * 官方 workspaceRegistry 的内存归档面（结构化镜像）。0.1.7+ 双方法齐全,
+ * 0.1.5 只有 archiveSession;方法自带 setState 持久化 —— 调用即生效即落盘,
+ * **免重启**。探测到才走内存路径,否则降级文件编辑（requiresRestart）。
+ */
+interface MemoryRegistryFace {
+  archiveSession?(sessionId: string, options?: { stopActivity?: boolean }): Promise<void>
+  unarchiveSession?(sessionId: string): Promise<void>
+  readonly archivedSessionIds?: readonly string[]
+}
+
+/** 逐 id 串行调用官方内存方法;失败按会话隔离收集（AM 批量语义）。 */
+async function runMemoryArchiveOps(
+  registry: MemoryRegistryFace,
+  ids: readonly string[],
+  op: 'archive' | 'unarchive',
+): Promise<{ succeeded: string[]; failures: { sessionId: string; reason: string }[] }> {
+  const fn = op === 'archive' ? registry.archiveSession : registry.unarchiveSession
+  const succeeded: string[] = []
+  const failures: { sessionId: string; reason: string }[] = []
+  for (const id of ids) {
+    try {
+      await fn!.call(registry, id)
+      succeeded.push(id)
+    } catch (err) {
+      failures.push({ sessionId: id, reason: String(err instanceof Error ? err.message : err) })
+    }
+  }
+  return { succeeded, failures }
+}
+
 /** 从 payload 抽合法 sessionIds（与 prune/purge 的入参纪律一致）；不合法返回 undefined。 */
 function validSessionIds(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined
@@ -725,6 +756,22 @@ export async function handleMethod(
     const request = (payload ?? {}) as { sessionIds?: unknown }
     const ids = validSessionIds(request.sessionIds)
     if (ids === undefined) return { ok: false, error: '缺少 sessionIds 数组' }
+    // 内存路径优先（0.1.7+ 双方法齐全）:官方 archiveSession 自带 setState
+    // 持久化,即时生效免重启;活动回合/未知会话按会话隔离报失败。
+    const mem = runtime.registry() as MemoryRegistryFace | undefined
+    if (mem?.archiveSession !== undefined) {
+      const before = new Set(mem.archivedSessionIds ?? [])
+      const { succeeded, failures } = await runMemoryArchiveOps(mem, ids, 'archive')
+      runtime.index?.onArchive(succeeded)
+      const total = (mem.archivedSessionIds ?? []).length
+      return {
+        ok: true,
+        added: ids.filter(id => !before.has(id)).length,
+        total,
+        requiresRestart: false,
+        ...(failures.length === 0 ? {} : { failures }),
+      }
+    }
     const result = archiveHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
     if (result.ok) runtime.index?.onArchive(ids)
     return result
@@ -732,6 +779,20 @@ export async function handleMethod(
   if (method === 'session-history-prune') {
     const request = (payload ?? {}) as { sessionIds?: unknown }
     const ids = validSessionIds(request.sessionIds)
+    // 内存路径优先（unarchiveSession 为 0.1.7+ 方法,0.1.5 无 → 文件降级）。
+    const mem = runtime.registry() as MemoryRegistryFace | undefined
+    if (mem?.unarchiveSession !== undefined && ids !== undefined) {
+      const { succeeded, failures } = await runMemoryArchiveOps(mem, ids, 'unarchive')
+      runtime.index?.onUnarchive(succeeded)
+      const remaining = (mem.archivedSessionIds ?? []).length
+      return {
+        ok: true,
+        removed: succeeded.length,
+        remaining,
+        requiresRestart: false,
+        ...(failures.length === 0 ? {} : { failures }),
+      }
+    }
     const result = pruneHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
     if (result.ok && ids !== undefined) runtime.index?.onUnarchive(ids)
     return result

@@ -36,6 +36,10 @@ function injectManageStyles(): () => void {
 .dsws_batchInfo{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 .dsws_btnDanger{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
 .dsws_manageHint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;padding:8px 10px 0}
+.dsws_chips{display:flex;align-items:center;gap:6px;padding:8px 10px 0;flex:none}
+.dsws_chip{height:24px;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:999px;padding:0 10px;font-size:12px;font-weight:500;line-height:22px;white-space:nowrap}
+.dsws_chip:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dsws_chipActive{background:var(--dsw-alias-state-business-primary);border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}
 `
   document.head.appendChild(tag)
   return () => {
@@ -50,6 +54,8 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [batch, setBatch] = useState<{ busy: boolean; message: string; ok: boolean }>({ busy: false, message: '', ok: true })
   const [confirmPurge, setConfirmPurge] = useState(false)
+  // 检索域过滤（全部/活跃/归档）——与搜索面板同一组 chip 语义。
+  const [domain, setDomain] = useState<'all' | 'active' | 'archived'>('all')
 
   // 语料：挂载取一次;批量成功后 setSessions(null) 重取（宿主半已联动索引）。
   useEffect(() => {
@@ -63,11 +69,13 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     return () => { cancelled = true }
   }, [sessions])
 
-  // workspace（cwd）分组,未分组排最后。
+  // workspace（cwd）分组,未分组排最后;域过滤（archived 缺省按活跃对待,兼容旧宿主半）。
   const manageGroups = useMemo<{ cwd: string; items: HostSessionItem[] }[]>(() => {
     if (sessions === null) return []
     const byCwd = new Map<string, HostSessionItem[]>()
     for (const item of sessions) {
+      if (domain === 'active' && item.archived === true) continue
+      if (domain === 'archived' && item.archived !== true) continue
       const list = byCwd.get(item.cwd)
       if (list === undefined) byCwd.set(item.cwd, [item])
       else list.push(item)
@@ -75,7 +83,7 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     return [...byCwd.entries()]
       .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
       .map(([cwd, items]) => ({ cwd, items }))
-  }, [sessions])
+  }, [sessions, domain])
 
   /** 批量动作;删除两步确认。 */
   const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
@@ -87,14 +95,18 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     const method = kind === 'archive'
       ? 'session-history-archive'
       : kind === 'unarchive' ? 'session-history-prune' : 'session-history-purge'
-    void callSteward<{ added?: number; removed?: number; purged?: number }>(method, { sessionIds: ids }).then((res) => {
-      const message = !res.ok
+    void callSteward<{ added?: number; removed?: number; purged?: number; requiresRestart?: boolean }>(method, { sessionIds: ids }).then((res) => {
+      const base = !res.ok
         ? translate(t, 'manage.done.error', { error: res.error ?? '?' })
         : kind === 'archive'
           ? translate(t, 'manage.done.archive', { n: res.added ?? ids.length })
           : kind === 'unarchive'
             ? translate(t, 'manage.done.unarchive', { n: res.removed ?? ids.length })
             : translate(t, 'manage.done.purge', { n: res.purged ?? ids.length })
+      // 及时性如实呈现:内存路径即时生效;文件降级路径才需要重启。
+      const message = res.ok === true && res.requiresRestart === true
+        ? `${base} ${translate(t, 'manage.done.restart')}`
+        : base
       setBatch({ busy: false, message, ok: res.ok === true })
       if (res.ok) {
         setSelected(new Set())
@@ -137,6 +149,15 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   }
 
   const children: ReactElement[] = [
+    createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
+      ...(['all', 'active', 'archived'] as const).map(id => createElement('button', {
+        key: id,
+        type: 'button',
+        className: `dsws_chip${domain === id ? ' dsws_chipActive' : ''}`,
+        'aria-pressed': domain === id,
+        onClick: () => { setDomain(id) },
+      }, translate(t, `domain.${id}` as LocaleKey))),
+    ]),
     createElement('div', { key: 'hint', className: 'dsws_manageHint' }, [
       translate(t, 'manage.hint'),
       createElement('span', { key: 'sep', style: { display: 'block', marginTop: '2px' } }, translate(t, 'manage.restartHint')),
