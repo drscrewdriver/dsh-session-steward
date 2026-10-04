@@ -109,32 +109,19 @@ export class SwitchWatermarkSync {
     try {
       const records = await this.sessionQuery.listSessions()
       this.state.total = records.length
-      // The official archive set first: flag flips are soft deletes (docs
-      // dropped, header kept) and un-archives force a version reset so the
-      // next diff re-ingests the full content. Registry absent -> no-op.
+      // 官方归档集合：纯 flag 翻转（R1 合表复用语义——归档保留 docs,恢复不重灌）。
+      // Registry absent -> no-op。
       const archiveSource = this.readArchiveSource?.()
       const archivedSet = new Set(archiveSource?.archivedSessionIds ?? [])
       this.engine.setArchived(archivedSet)
-      const archivedSetSize = archivedSet.size
       const failures: { sessionId: string; error: string }[] = []
       let updated = 0
       const changedIds: string[] = []
       for (const record of records) {
         const header = record.header
         const existing = this.engine.getSession(header.id)
-        if (archivedSet.has(header.id)) {
-          // Header-only ingest (no docs): the title cache carries over.
-          if (existing !== undefined && existing.archived && existing.version === header.version) continue
-          this.engine.upsertArchivedHeader({
-            sessionId: header.id,
-            version: header.version,
-            cwd: header.cwd ?? '',
-            updatedAt: header.createdAt ?? 0,
-            title: existing?.title ?? '',
-          })
-          updated += 1
-          continue
-        }
+        // 归档与活跃同一读取通路：readSession 对归档会话是 replay-validate 不激活
+        // （宿主 session-query 保证）。归档正文因此入索引（可被 archived 域检索）。
         if (existing !== undefined && existing.version === header.version) continue
         changedIds.push(header.id)
         try {
@@ -151,51 +138,29 @@ export class SwitchWatermarkSync {
           failures.push({ sessionId: header.id, error: String(err instanceof Error ? err.message : err) })
         }
       }
-      // Drop sessions that vanished from the corpus.
+      // Drop sessions that vanished from the corpus —— 但**归档集合里的行不删**：
+      // 某些宿主线的 listSessions 可能过滤归档,归档集合才是删除真值（purge 会把
+      // id 从归档数组里摘掉,彼时下一轮自然清行）。
       const corpusIds = new Set(records.map(record => record.header.id))
       for (const indexed of this.engine.listIndexedSessions()) {
-        if (!corpusIds.has(indexed.sessionId)) this.engine.removeSession(indexed.sessionId)
+        if (!corpusIds.has(indexed.sessionId) && !archivedSet.has(indexed.sessionId)) {
+          this.engine.removeSession(indexed.sessionId)
+        }
       }
       await this.backfillTitles(changedIds)
-      await this.backfillArchivedTitles()
       this.state.updated = updated
       this.state.failures = failures
       this.state.indexed = this.engine.countSessions()
       this.state.lastSyncAt = Date.now()
       this.state.state = 'idle'
       this.state.error = undefined
-      this.log?.(`sync pass: scanned=${this.state.total} updated=${updated} skipped-archived=${String(archivedSetSize)} failures=${failures.length} indexed=${this.state.indexed} duration=${Date.now() - passStart}ms driver=${this.engine.driverLabel}`)
+      this.log?.(`sync pass: scanned=${this.state.total} updated=${updated} archived=${archivedSet.size} failures=${failures.length} indexed=${this.state.indexed} duration=${Date.now() - passStart}ms driver=${this.engine.driverLabel}`)
     } catch (err) {
       this.state.state = 'error'
       this.state.error = String(err instanceof Error ? err.message : err)
       this.log?.(`sync pass FAILED: ${this.state.error}`)
     }
     return this.snapshot()
-  }
-
-  /**
-   * Fold titles for archived header-only rows that never got one (archived
-   * before first indexing). Bounded: only rows with an empty title, and the
-   * title fold reads the log without ingesting content.
-   */
-  private async backfillArchivedTitles(): Promise<void> {
-    const readTitles = this.sessionQuery.readTitleSnapshots
-    if (readTitles === undefined) return
-    const missing = this.engine.listArchived().filter(session => session.title.trim() === '')
-    if (missing.length === 0) return
-    try {
-      const observations = await readTitles(missing.map(session => session.sessionId))
-      for (const observation of observations) {
-        if (observation.status !== 'fulfilled' || observation.value === undefined) continue
-        const title = observation.value.title?.title
-        if (typeof title === 'string' && title.trim().length > 0) {
-          this.engine.updateSessionHeader({ sessionId: observation.value.session.id, title })
-        }
-      }
-      this.log?.(`archived title backfill: ${missing.length} rows processed`)
-    } catch (err) {
-      this.log?.(`archived title backfill failed: ${String(err instanceof Error ? err.message : err)}`)
-    }
   }
 
   /** Fold latest titles for changed sessions into the index header rows. */
@@ -207,8 +172,7 @@ export class SwitchWatermarkSync {
       for (const observation of observations) {
         if (observation.status !== 'fulfilled' || observation.value === undefined) continue
         const title = observation.value.title?.title
-        const row = this.engine.getSession(observation.value.session.id)
-        if (row?.archived === true) continue
+        // 归档行的标题同样折叠（归档会话仍可改名,索引标题要跟上）。
         if (typeof title === 'string' && title.trim().length > 0) {
           this.engine.updateSessionHeader({ sessionId: observation.value.session.id, title })
         }

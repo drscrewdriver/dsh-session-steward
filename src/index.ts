@@ -30,7 +30,7 @@ import {
   type StewardConfig,
   type SwitchSearchConfig,
 } from './config.ts'
-import { listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
+import { archiveHistory, listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
 import { purgeHistory } from './host/history/purge.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
@@ -62,8 +62,8 @@ import type { SwitchRawEvent } from './host/index/extract.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG } from './config.ts'
 export type { StewardConfig, SwitchSearchConfig } from './config.ts'
-export { readArchiveSet, pruneArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
-export { listHistory, pruneHistory } from './host/history/archive.ts'
+export { readArchiveSet, pruneArchiveFile, archiveArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
+export { listHistory, pruneHistory, archiveHistory } from './host/history/archive.ts'
 export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor, isSourceMigrateBackupName, backupFilesIn } from './host/history/purge.ts'
 export { buildSessionReport, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, readProjectionCache, readTailFacts } from './host/health/gates.ts'
 export { gateSourceKind, migrateSessionSourceKind, migrateLegacySource, readSourceKindFacts, SOURCE_MIGRATE_BACKUP_SUFFIX, V4_HOST_MIN } from './host/health/source-kind.ts'
@@ -280,6 +280,18 @@ export interface StewardRuntime {
    * 不影响任何判定结果）。`apply()` 总是提供实例。
    */
   cache?: HealthCache
+  /**
+   * 搜索索引联动钩子（可选）：管家写侧操作成功后同步翻索引的归档标记 /
+   * 删除索引行，消灭"搜索还挂着 30s 前的幽灵"的窗口。缺省（单测/降级）为无联动。
+   */
+  index?: {
+    /** 批量归档成功 → 翻 archived=true。 */
+    onArchive: (sessionIds: readonly string[]) => void
+    /** 取消归档成功 → 翻 archived=false。 */
+    onUnarchive: (sessionIds: readonly string[]) => void
+    /** 清理成功（物理删除）→ 索引行整个移除。 */
+    onPurged: (sessionIds: readonly string[]) => void
+  }
 }
 
 /**
@@ -288,7 +300,12 @@ export interface StewardRuntime {
  * `session-history-prune` 与 `session-history-purge` 是**两件事**，不可合并：
  * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
  */
-export const HISTORY_METHODS = ['session-history-list', 'session-history-prune', 'session-history-purge'] as const
+export const HISTORY_METHODS = [
+  'session-history-list',
+  'session-history-archive',
+  'session-history-prune',
+  'session-history-purge',
+] as const
 export const HEALTH_METHODS = [
   'session-health-status',
   'session-health-scan',
@@ -406,6 +423,7 @@ async function listSessions(srt: SearchRuntime): Promise<{ ok: boolean; items?: 
         title: session.title,
         cwd: session.cwd,
         updatedAt: session.updatedAt,
+        archived: session.archived,
       })),
     }
   }
@@ -422,6 +440,7 @@ async function listSessions(srt: SearchRuntime): Promise<{ ok: boolean; items?: 
         title: titles.get(record.header.id) ?? '',
         cwd: record.header.cwd ?? '',
         updatedAt: record.header.createdAt,
+        archived: false,
       })),
     }
   } catch (err) {
@@ -438,9 +457,14 @@ async function contentSearch(
   srt: SearchRuntime,
   payload: unknown,
 ): Promise<{ ok: boolean; items?: unknown[]; error?: string }> {
-  const record = payload as { query?: unknown; limit?: unknown; types?: unknown; sortBy?: unknown } | null
+  const record = payload as { query?: unknown; limit?: unknown; types?: unknown; sortBy?: unknown; archived?: unknown } | null
   const query = typeof record?.query === 'string' ? record.query.trim() : ''
   if (query === '') return { ok: false, error: '缺少 query' }
+  // 检索域 chip（全部/活跃/归档）；未知值回退 'all'，新旧客户端互相兼容。
+  const archived: 'active' | 'archived' | 'all'
+    = record?.archived === 'active' ? 'active'
+    : record?.archived === 'archived' ? 'archived'
+    : 'all'
   const requestedLimit = typeof record?.limit === 'number' && Number.isSafeInteger(record.limit)
     ? record.limit
     : DEFAULT_LIMIT
@@ -462,7 +486,7 @@ async function contentSearch(
   try {
     return {
       ok: true,
-      items: index.engine.search({ query, types, limit, sortBy }),
+      items: index.engine.search({ query, types, limit, sortBy, archived }),
     }
   } catch (err) {
     return { ok: false, error: String(err instanceof Error ? err.message : err) }
@@ -658,6 +682,13 @@ export async function handleIndexMethod(method: string, payload: unknown, srt: S
   return { ok: false, error: `未知的 switch-search API 方法 "${method}"` }
 }
 
+/** 从 payload 抽合法 sessionIds（与 prune/purge 的入参纪律一致）；不合法返回 undefined。 */
+function validSessionIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  const ids = [...new Set(value.filter((id): id is string => typeof id === 'string' && id !== ''))]
+  return ids.length > 0 ? ids : undefined
+}
+
 /**
  * 处理一次管家子域 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
  * @param method - 路由方法名。
@@ -682,14 +713,34 @@ export async function handleMethod(
   if (method === 'session-history-list') {
     return await listHistory(runtime.registry, undefined, storagePathsFor(runtime.dshHome), runtime.dshHome)
   }
+  if (method === 'session-history-archive') {
+    const request = (payload ?? {}) as { sessionIds?: unknown }
+    const ids = validSessionIds(request.sessionIds)
+    if (ids === undefined) return { ok: false, error: '缺少 sessionIds 数组' }
+    const result = archiveHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
+    if (result.ok) runtime.index?.onArchive(ids)
+    return result
+  }
   if (method === 'session-history-prune') {
-    return pruneHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
+    const request = (payload ?? {}) as { sessionIds?: unknown }
+    const ids = validSessionIds(request.sessionIds)
+    const result = pruneHistory(payload, runtime.log, storagePathsFor(runtime.dshHome))
+    if (result.ok && ids !== undefined) runtime.index?.onUnarchive(ids)
+    return result
   }
   if (method === 'session-history-purge') {
-    return purgeHistory(payload, runtime.log, {
+    const request = (payload ?? {}) as { sessionIds?: unknown }
+    const ids = validSessionIds(request.sessionIds)
+    const result = purgeHistory(payload, runtime.log, {
       dshHome: runtime.dshHome,
       searchPaths: storagePathsFor(runtime.dshHome),
     })
+    // 联动只在真删成功后：失败条目留在索引里（还能搜到,如实）。
+    if (result.ok && ids !== undefined) {
+      const failed = new Set((result.failures ?? []).map(f => f.sessionId))
+      runtime.index?.onPurged(ids.filter((id) => !failed.has(id)))
+    }
+    return result
   }
 
   if (method === 'session-health-status') {
@@ -924,6 +975,21 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
     attribute: attributor,
     log,
     cache: new HealthCache(),
+    // 管家写侧 → 索引联动：引擎未开（search=false）时为 no-op。
+    index: {
+      onArchive: (ids) => {
+        if (!engine.isOpen) return
+        try { for (const id of ids) engine.setArchivedOne(id, true) } catch (err) { log(`index onArchive failed: ${String(err instanceof Error ? err.message : err)}`) }
+      },
+      onUnarchive: (ids) => {
+        if (!engine.isOpen) return
+        try { for (const id of ids) engine.setArchivedOne(id, false) } catch (err) { log(`index onUnarchive failed: ${String(err instanceof Error ? err.message : err)}`) }
+      },
+      onPurged: (ids) => {
+        if (!engine.isOpen) return
+        try { for (const id of ids) engine.removeSession(id) } catch (err) { log(`index onPurged failed: ${String(err instanceof Error ? err.message : err)}`) }
+      },
+    },
   }
 
   // ── 搜索子域运行时：独立索引生命周期（引擎打开、水位同步、后台轮询）。

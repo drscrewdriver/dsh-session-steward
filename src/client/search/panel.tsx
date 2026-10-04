@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import type { SwitchSearchConfig } from '../../config.ts'
 // 0.1.7：插件族共用设置节（dsh-thinking-levels 持有并声明 `dsh-family.tab`
 // 子席位；本仓不依赖 ui-slots 类型包，席位键以运行时 children 表为准）。
-import { callHost, callHostAny, type HostContentHit, type HostIndexStatus, type HostSessionItem, type HostSortMode, type SwitchSessionsService, type SwitchUiWorkspaceService } from './host-api.ts'
+import {callHost, callHostAny, callSteward,  type HostContentHit, type HostIndexStatus, type HostSessionItem, type HostSortMode, type SwitchSessionsService, type SwitchUiWorkspaceService } from './host-api.ts'
 import type { SwitchCardScope } from './card.tsx'
 import { translate, type LocaleKey } from './locales.ts'
 import { LABELS, isInvokeChord } from './platform.ts'
@@ -83,12 +83,25 @@ type CardLocale = (key: LocaleKey, params?: Record<string, unknown>) => string
 /** Coarse content-type filter carried to the host content-search. */
 type ContentType = 'all' | 'user' | 'reply' | 'tool'
 
+/** 检索域（R1：归档正文入索引后的 chip 维度）。 */
+type ArchivedDomain = 'all' | 'active' | 'archived'
+
+/** 面板模式：标题 / 内容 / 管理（批量台）。 */
+type PanelMode = 'title' | 'content' | 'manage'
+
 /** The coarse filter chips rendered above content results. */
 const CONTENT_TYPE_CHIPS: readonly { id: ContentType; labelKey: LocaleKey }[] = [
   { id: 'all', labelKey: 'filter.all' },
   { id: 'user', labelKey: 'filter.user' },
   { id: 'reply', labelKey: 'filter.reply' },
   { id: 'tool', labelKey: 'filter.tool' },
+]
+
+/** 检索域 chips（标题/内容两模式共用）。 */
+const ARCHIVED_CHIPS: readonly { id: ArchivedDomain; labelKey: LocaleKey }[] = [
+  { id: 'all', labelKey: 'domain.all' },
+  { id: 'active', labelKey: 'domain.active' },
+  { id: 'archived', labelKey: 'domain.archived' },
 ]
 
 /** Result-ordering chips rendered at the right of the same filter row. */
@@ -111,10 +124,11 @@ const SORT_CHIPS: readonly { id: HostSortMode; labelKey: LocaleKey }[] = [
  * @param normalized - the trimmed query text.
  * @param contentType - the active content-type filter.
  * @param sortBy - the active result ordering.
+ * @param archivedFilter - the retrieval-domain chip (all/active/archived).
  * @returns an opaque key, stable for equal inputs.
  */
-function contentRequestKey(normalized: string, contentType: ContentType, sortBy: HostSortMode): string {
-  return `${normalized}\u0000${contentType}\u0000${sortBy}`
+function contentRequestKey(normalized: string, contentType: ContentType, sortBy: HostSortMode, archivedFilter: ArchivedDomain): string {
+  return `${normalized}\u0000${contentType}\u0000${sortBy}\u0000${archivedFilter}`
 }
 
 /**
@@ -158,7 +172,7 @@ interface SwitchFooterProps {
 }
 
 /** Last panel mode used this web session (mode memory, not persisted). */
-let lastPanelMode: 'title' | 'content' = 'title'
+let lastPanelMode: PanelMode = 'title'
 
 declare module 'cordis' {
   interface Context {
@@ -199,7 +213,7 @@ const CSS = `
 .dsws_buttonRail{flex:none;width:28px;height:28px;padding:0;gap:0;justify-content:center;border-radius:50%}
 .dsws_button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dsws_button svg{flex:none}
-.dsws_trigger{position:fixed;z-index:2147483000;left:50%;top:50%;transform:translate(-50%,-50%);width:520px;max-width:calc(100vw - 24px);max-height:min(72vh,640px);box-sizing:border-box;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:var(--dsw-shadow-lv3,0 8px 28px rgba(0,0,0,.16));overflow:hidden;display:flex;flex-direction:column;font-family:Inter,var(--dsw-font-family)}
+.dsws_trigger{position:fixed;z-index:2147483000;left:50%;top:50%;transform:translate(-50%,-50%);width:860px;max-width:calc(100vw - 32px);max-height:min(84vh,880px);box-sizing:border-box;background:var(--dsw-specific-tip);border:1px solid var(--dsw-alias-border-l1);border-radius:12px;box-shadow:var(--dsw-shadow-lv3,0 8px 28px rgba(0,0,0,.16));overflow:hidden;display:flex;flex-direction:column;font-family:Inter,var(--dsw-font-family)}
 .dsws_toolrow{display:flex;align-items:center;gap:8px;padding:10px 10px 0}
 .dsws_mode{display:inline-flex;align-items:center;gap:2px;flex:none;background:var(--dsw-alias-interactive-bg-hover);border-radius:8px;padding:2px}
 .dsws_modeBtn{height:24px;border:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;border-radius:6px;padding:0 8px;font-size:12px;font-weight:500;line-height:20px}
@@ -273,6 +287,20 @@ const CSS = `
 .dsws_pillDots span:nth-child(3){animation-delay:1s}
 @keyframes dsws-reveal-dot{0%,32%{opacity:0}33%,100%{opacity:1}}
 @media (prefers-reduced-motion:reduce){.dsws_pillDots span{animation:none;opacity:1}}
+/* ── 批量管理台（manage 模式,面板放大后的第三页签）── */
+.dsws_manageList{flex:1 1 auto;min-height:0;overflow-y:auto;margin:8px 0 0;padding:0 6px 8px}
+.dsws_group{margin-bottom:6px}
+.dsws_groupHead{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--dsw-specific-tip);border-bottom:1px solid var(--dsw-alias-border-l2);cursor:pointer;user-select:none}
+.dsws_groupTitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary)}
+.dsws_groupCount{flex:none;color:var(--dsw-alias-label-caption);font-size:11px;font-variant-numeric:tabular-nums}
+.dsws_check{flex:none;display:inline-flex;align-items:center}
+.dsws_check input{width:13px;height:13px;accent-color:var(--dsw-alias-state-business-primary);cursor:pointer}
+.dsws_tagArch{flex:none;color:var(--dsw-alias-state-warn-label,var(--dsw-alias-label-caption));font-size:10px;line-height:16px;border:1px solid currentColor;border-radius:999px;padding:0 6px;white-space:nowrap}
+.dsws_batchBar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dsws_batchInfo{flex:1 1 auto;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
+.dsws_btnDanger{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
+.dsws_hint{color:var(--dsw-alias-label-caption);font-size:11px;line-height:16px;padding:2px 10px 6px}
+.dsws_manageHint{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;padding:8px 10px 0}
 `
 
 /** Inject the plugin stylesheet once per activation (removed on disposal). */
@@ -304,13 +332,20 @@ function SwitchPanel({
   // Mode memory: the panel reopens in the mode last used in this web session
   // (first open falls back to 'title'). Session-scoped on purpose — no
   // persistence, the settings card's defaultMode stays the durable preference.
-  const [mode, setModeState] = useState<'title' | 'content'>(lastPanelMode)
-  const setMode = (next: 'title' | 'content'): void => {
+  const [mode, setModeState] = useState<PanelMode>(lastPanelMode)
+  const setMode = (next: PanelMode): void => {
     lastPanelMode = next
     setModeState(next)
+    setConfirmPurge(false)
   }
   const [query, setQuery] = useState('')
   const [contentType, setContentType] = useState<ContentType>('all')
+  // 检索域 chip：标题/内容两模式共用（R1——归档正文已入索引）。
+  const [archivedFilter, setArchivedFilter] = useState<ArchivedDomain>('all')
+  // 管理台：勾选集合与批量动作状态。
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [batch, setBatch] = useState<{ busy: boolean; message: string; ok: boolean }>({ busy: false, message: '', ok: true })
+  const [confirmPurge, setConfirmPurge] = useState(false)
   const [sortBy, setSortByState] = useState<HostSortMode>(readStoredSort)
   const setSortBy = (next: HostSortMode): void => {
     writeStoredSort(next)
@@ -374,13 +409,14 @@ function SwitchPanel({
     void callHostAny<HostIndexStatus>('index-rebuild', {})
   }
 
-  // Load the title-search corpus once on open.
+  // Load the title-search corpus once on open (and after every batch op:
+  // setSessions(null) from runBatch retriggers this effect).
   useEffect(() => {
     if (sessions !== null) return
     let cancelled = false
     callHost<HostSessionItem>('list-sessions', {}).then((res) => {
       if (cancelled) return
-      if (res.ok) { setSessions(res.items); setSessionsError(null) }
+      if (res.ok) { setSessions(res.items); setSelected(new Set()); setConfirmPurge(false) }
       else setSessionsError(res.error ?? '读取会话列表失败')
     })
     return () => { cancelled = true }
@@ -394,7 +430,7 @@ function SwitchPanel({
     }
     let cancelled = false
     const requestType: ContentType = contentType
-    const requestKey = contentRequestKey(normalized, requestType, sortBy)
+    const requestKey = contentRequestKey(normalized, requestType, sortBy, archivedFilter)
     setContent(prev => ({ query: requestKey, status: 'loading', items: prev.query === requestKey ? prev.items : [] }))
     const timer = window.setTimeout(() => {
       callHost<HostContentHit>('content-search', {
@@ -402,6 +438,7 @@ function SwitchPanel({
         limit: 50,
         types: requestType === 'all' ? undefined : [requestType],
         sortBy,
+        archived: archivedFilter,
       }).then((res) => {
         if (cancelled) return
         setContent({
@@ -416,7 +453,7 @@ function SwitchPanel({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [mode, normalized, contentType, sortBy])
+  }, [mode, normalized, contentType, sortBy, archivedFilter])
 
   // Focus the input on open; reset mode on every open.
   useEffect(() => {
@@ -430,22 +467,145 @@ function SwitchPanel({
     return () => { document.removeEventListener('keydown', onKey) }
   }, [onClose])
 
-  // Title-mode rows: local substring filter over the corpus.
+  // Title-mode rows: local substring filter over the corpus + domain chip.
   const titleRows = useMemo<HostSessionItem[]>(() => {
     if (sessions === null) return []
-    if (normalized === '') return sessions
-    return sessions.filter(item =>
+    const byDomain = sessions.filter(item =>
+      archivedFilter === 'active' ? item.archived !== true
+      : archivedFilter === 'archived' ? item.archived === true
+      : true)
+    if (normalized === '') return byDomain
+    return byDomain.filter(item =>
       item.title.toLowerCase().includes(normalized)
       || item.cwd.toLowerCase().includes(normalized))
-  }, [sessions, normalized])
+  }, [sessions, normalized, archivedFilter])
+
+  // Manage-mode groups: workspace (cwd) → rows, 未分组 at the end.
+  const manageGroups = useMemo<{ cwd: string; items: HostSessionItem[] }[]>(() => {
+    if (sessions === null) return []
+    const byCwd = new Map<string, HostSessionItem[]>()
+    for (const item of sessions) {
+      const list = byCwd.get(item.cwd)
+      if (list === undefined) byCwd.set(item.cwd, [item])
+      else list.push(item)
+    }
+    return [...byCwd.entries()]
+      .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
+      .map(([cwd, items]) => ({ cwd, items }))
+  }, [sessions])
+
+  /**
+   * Batch operation against the steward subdomain. Delete is two-step
+   * (confirmPurge); success clears the selection and refetches the corpus
+   * (the host half already folded the index side of the operation).
+   */
+  const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
+    const ids = [...selected]
+    if (ids.length === 0 || batch.busy) return
+    if (kind === 'purge' && !confirmPurge) { setConfirmPurge(true); return }
+    setConfirmPurge(false)
+    setBatch({ busy: true, message: '', ok: true })
+    const method = kind === 'archive'
+      ? 'session-history-archive'
+      : kind === 'unarchive' ? 'session-history-prune' : 'session-history-purge'
+    void callSteward<{ added?: number; removed?: number; purged?: number }>(method, { sessionIds: ids }).then((res) => {
+      const message = !res.ok
+        ? translate(t, 'manage.done.error', { error: res.error ?? '?' })
+        : kind === 'archive'
+          ? translate(t, 'manage.done.archive', { n: res.added ?? ids.length })
+          : kind === 'unarchive'
+            ? translate(t, 'manage.done.unarchive', { n: res.removed ?? ids.length })
+            : translate(t, 'manage.done.purge', { n: res.purged ?? ids.length })
+      setBatch({ busy: false, message, ok: res.ok === true })
+      if (res.ok) {
+        setSelected(new Set())
+        // 重取语料：宿主半在成功路径上已同步联动索引(翻 flag/删行)。
+        setSessions(null)
+      }
+    })
+  }
+
+  const toggleOne = (sessionId: string): void => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(sessionId)) next.delete(sessionId)
+      else next.add(sessionId)
+      return next
+    })
+  }
+
+  const toggleGroup = (items: readonly HostSessionItem[]): void => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      const allIn = items.every(item => next.has(item.sessionId))
+      for (const item of items) {
+        if (allIn) next.delete(item.sessionId)
+        else next.add(item.sessionId)
+      }
+      return next
+    })
+  }
 
   const children: ReactElement[] = []
   if (sessionsError !== null) {
     children.push(createElement('div', { key: 'err', className: 'dsws_error' }, translate(t, 'panel.sessionsError', { error: sessionsError })))
   }
-  const activeRequestKey = contentRequestKey(normalized, contentType, sortBy)
+  const activeRequestKey = contentRequestKey(normalized, contentType, sortBy, archivedFilter)
   const activeContent = content.query === activeRequestKey ? content : { query: activeRequestKey, status: 'loading' as const, items: [] }
-  if (mode === 'title') {
+  if (mode === 'manage') {
+    if (sessions === null) {
+      children.push(createElement('div', { key: 'loading', className: 'dsws_status' }, translate(t, 'panel.loadingSessions')))
+    } else if (manageGroups.length === 0) {
+      children.push(createElement('div', { key: 'empty', className: 'dsws_empty' }, translate(t, 'panel.noSessions')))
+    } else {
+      children.push(createElement('div', { key: 'hint', className: 'dsws_manageHint' }, [
+        translate(t, 'manage.hint'),
+        createElement('span', { key: 'sep', style: { display: 'block', marginTop: '2px' } }, translate(t, 'manage.restartHint')),
+      ]))
+      children.push(createElement('div', { key: 'groups', className: 'dsws_manageList' },
+        ...manageGroups.map(group => createElement('div', { key: group.cwd === '' ? '(nocwd)' : group.cwd, className: 'dsws_group' }, [
+          createElement('div', {
+            key: 'head',
+            className: 'dsws_groupHead',
+            title: translate(t, 'manage.selectGroup'),
+            onClick: () => { toggleGroup(group.items) },
+          }, [
+            createElement('span', { key: 'check', className: 'dsws_check' },
+              createElement('input', {
+                type: 'checkbox',
+                checked: group.items.length > 0 && group.items.every(item => selected.has(item.sessionId)),
+                onChange: () => { toggleGroup(group.items) },
+                onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
+              })),
+            createElement('span', { key: 'title', className: 'dsws_groupTitle' }, group.cwd === '' ? translate(t, 'manage.group.nocwd') : group.cwd),
+            createElement('span', { key: 'count', className: 'dsws_groupCount' }, `${group.items.length}`),
+          ]),
+          ...group.items.map(item => createElement('div', { key: item.sessionId, className: 'dsws_group' }, [
+            createElement('button', {
+              key: 'row',
+              type: 'button',
+              className: 'dsws_row',
+              onClick: () => { open(item.sessionId) },
+            }, [
+              createElement('span', { key: 'line', className: 'dsws_rowTitle' }, [
+                createElement('span', { key: 'check', className: 'dsws_check' },
+                  createElement('input', {
+                    type: 'checkbox',
+                    checked: selected.has(item.sessionId),
+                    onChange: () => { toggleOne(item.sessionId) },
+                    onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
+                  })),
+                createElement('span', { key: 'x', className: 'dsws_titleText' }, item.title || translate(t, 'panel.untitled')),
+                item.archived === true && createElement('span', { key: 'arch', className: 'dsws_tagArch' }, translate(t, 'tag.archived')),
+                createElement('span', { key: 'tag', className: 'dsws_tag' }, fmtTime(item.updatedAt)),
+              ]),
+              createElement('span', { key: 'meta', className: 'dsws_meta' }, item.cwd),
+            ]),
+          ])),
+        ])),
+      ))
+    }
+  } else if (mode === 'title') {
     if (sessions === null) {
       children.push(createElement('div', { key: 'loading', className: 'dsws_status' }, translate(t, 'panel.loadingSessions')))
     } else if (titleRows.length === 0) {
@@ -464,6 +624,7 @@ function SwitchPanel({
       }, [
         createElement('span', { key: 't', className: 'dsws_rowTitle' }, [
           createElement('span', { key: 'x', className: 'dsws_titleText' }, item.title || translate(t, 'panel.untitled')),
+          item.archived === true && createElement('span', { key: 'arch', className: 'dsws_tagArch' }, translate(t, 'tag.archived')),
           createElement('span', { key: 'tag', className: 'dsws_tag' }, fmtTime(item.updatedAt)),
         ]),
         item.cwd !== '' && createElement('span', { key: 'c', className: 'dsws_meta' }, item.cwd),
@@ -547,8 +708,14 @@ function SwitchPanel({
             className: `dsws_modeBtn${mode === 'content' ? ' dsws_modeBtnActive' : ''}`,
             onClick: () => { setMode('content') },
           }, translate(t, 'panel.contentSearch')),
+          createElement('button', {
+            key: 'manage',
+            type: 'button',
+            className: `dsws_modeBtn${mode === 'manage' ? ' dsws_modeBtnActive' : ''}`,
+            onClick: () => { setMode('manage') },
+          }, translate(t, 'panel.manage')),
         ]),
-        createElement('input', {
+        mode !== 'manage' && createElement('input', {
           key: 'search',
           ref: inputRef,
           className: 'dsws_search',
@@ -558,18 +725,27 @@ function SwitchPanel({
           onChange: (e: { target: { value: string } }) => setQuery(e.target.value),
         }),
       ]),
-      mode === 'content' && createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'filter.all') }, [
-        ...CONTENT_TYPE_CHIPS.map(chip => createElement('button', {
+      mode !== 'manage' && createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
+        // 检索域 chips（全部/活跃/归档）在前——标题与内容两模式共用。
+        ...ARCHIVED_CHIPS.map(chip => createElement('button', {
+          key: chip.id,
+          type: 'button',
+          className: `dsws_chip${archivedFilter === chip.id ? ' dsws_chipActive' : ''}`,
+          'aria-pressed': archivedFilter === chip.id,
+          onClick: () => { setArchivedFilter(chip.id) },
+        }, translate(t, chip.labelKey))),
+        // 类型筛选与排序只属于内容模式。
+        ...(mode === 'content' ? CONTENT_TYPE_CHIPS.map(chip => createElement('button', {
           key: chip.id,
           type: 'button',
           className: `dsws_chip${contentType === chip.id ? ' dsws_chipActive' : ''}`,
           'aria-pressed': contentType === chip.id,
           onClick: () => { setContentType(chip.id) },
-        }, translate(t, chip.labelKey))),
+        }, translate(t, chip.labelKey))) : []),
         // Ordering sits on the same row, pushed right: it filters the same
         // result set the type chips do, so it is not a separate toolbar.
         createElement('span', { key: 'gap', className: 'dsws_chipGap' }),
-        createElement('span', { key: 'sort', className: 'dsws_sortGroup', role: 'group', 'aria-label': translate(t, 'sort.label') },
+        ...(mode === 'content' ? [createElement('span', { key: 'sort', className: 'dsws_sortGroup', role: 'group', 'aria-label': translate(t, 'sort.label') },
           SORT_CHIPS.map(chip => createElement('button', {
             key: chip.id,
             type: 'button',
@@ -577,7 +753,25 @@ function SwitchPanel({
             'aria-pressed': sortBy === chip.id,
             title: chip.id === 'time' ? translate(t, 'sort.time.hint') : translate(t, 'sort.relevance.hint'),
             onClick: () => { setSortBy(chip.id) },
-          }, translate(t, chip.labelKey)))),
+          }, translate(t, chip.labelKey))))] : []),
+      ]),
+      mode === 'manage' && selected.size > 0 && createElement('div', { key: 'batch', className: 'dsws_batchBar' }, [
+        createElement('span', { key: 'info', className: 'dsws_batchInfo' }, batch.message !== ''
+          ? batch.message
+          : translate(t, 'manage.selected', { n: selected.size })),
+        createElement('button', {
+          key: 'archive', type: 'button', className: 'dsws_actBtn', disabled: batch.busy,
+          onClick: () => { runBatch('archive') },
+        }, translate(t, 'manage.batch.archive')),
+        createElement('button', {
+          key: 'unarchive', type: 'button', className: 'dsws_actBtn', disabled: batch.busy,
+          onClick: () => { runBatch('unarchive') },
+        }, translate(t, 'manage.batch.unarchive')),
+        createElement('button', {
+          key: 'purge', type: 'button', className: `dsws_actBtn dsws_btnDanger${confirmPurge ? ' dsws_chipActive' : ''}`, disabled: batch.busy,
+          onClick: () => { runBatch('purge') },
+        }, confirmPurge ? translate(t, 'manage.batch.confirm') : translate(t, 'manage.batch.delete')),
+        batch.busy && createElement('span', { key: 'busy', className: 'dsws_batchInfo' }, translate(t, 'manage.batch.working')),
       ]),
       children,
       // The key bar. It advertises only chords that are actually bound: the

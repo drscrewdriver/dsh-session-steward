@@ -81,6 +81,26 @@ export const zh = {
   'type.assistant/message': '回复',
   'type.tool/call': '工具调用',
   'type.tool/result': '工具结果',
+  // ── R1/R2：检索域 chip 与批量管理台 ──
+  'panel.manage': '管理',
+  'domain.all': '全部',
+  'domain.active': '活跃',
+  'domain.archived': '归档',
+  'tag.archived': '归档',
+  'manage.hint': '按工作区分组，勾选后批量操作；删除不可撤销。',
+  'manage.restartHint': '操作直接写官方存储文件，需重启 DSH 后在侧栏完全生效。',
+  'manage.group.nocwd': '（未分组）',
+  'manage.selectGroup': '全选/取消本组',
+  'manage.selected': '已选 {n}',
+  'manage.batch.archive': '归档',
+  'manage.batch.unarchive': '取消归档',
+  'manage.batch.delete': '删除',
+  'manage.batch.confirm': '确认删除',
+  'manage.batch.working': '执行中…',
+  'manage.done.archive': '已归档 {n} 个会话。',
+  'manage.done.unarchive': '已取消归档 {n} 个会话。',
+  'manage.done.purge': '已清理 {n} 个会话。',
+  'manage.done.error': '操作失败：{error}',
 } as const
 
 export type LocaleKey = keyof typeof zh
@@ -160,10 +180,29 @@ export const en: Dict = {
   'type.assistant/message': 'Reply',
   'type.tool/call': 'Tool call',
   'type.tool/result': 'Tool result',
+  'panel.manage': 'Manage',
+  'domain.all': 'All',
+  'domain.active': 'Active',
+  'domain.archived': 'Archived',
+  'tag.archived': 'Archived',
+  'manage.hint': 'Grouped by workspace; tick rows then batch-operate. Deletion is irreversible.',
+  'manage.restartHint': 'Edits go straight to the official storage file; restart DSH for the sidebar to reflect them.',
+  'manage.group.nocwd': '(no workspace)',
+  'manage.selectGroup': 'Toggle the whole group',
+  'manage.selected': '{n} selected',
+  'manage.batch.archive': 'Archive',
+  'manage.batch.unarchive': 'Unarchive',
+  'manage.batch.delete': 'Delete',
+  'manage.batch.confirm': 'Confirm delete',
+  'manage.batch.working': 'Working…',
+  'manage.done.archive': 'Archived {n} sessions.',
+  'manage.done.unarchive': 'Unarchived {n} sessions.',
+  'manage.done.purge': 'Purged {n} sessions.',
+  'manage.done.error': 'Operation failed: {error}',
 }
 
 /** Japanese dictionary. */
-export const ja: Dict = {
+export const ja: Partial<Dict> = {
   'card.title': '検索インデックス',
   'card.description': 'サイドバーセッション検索の強化：タイトル検索とコンテンツ検索のワンクリック切り替え。コンテンツ検索はプラグイン独自のインデックスを使用し、DSH公式全文インデックスに依存しません。',
   'card.unavailable': '設定名前空間が利用できません：プラグインがプロファイルに組み込まれていることを確認してください。',
@@ -239,7 +278,7 @@ export const ja: Dict = {
 }
 
 /** Korean dictionary. */
-export const ko: Dict = {
+export const ko: Partial<Dict> = {
   'card.title': '검색 인덱스',
   'card.description': '사이드바 세션 검색 강화: 제목 검색과 콘텐츠 검색 간 원클릭 전환. 콘텐츠 검색은 플러그인 자체 인덱스를 사용하며 DSH 공식 전문 인덱스에 의존하지 않습니다.',
   'card.unavailable': '설정 네임스페이스를 사용할 수 없습니다: 플러그인이 프로파일에 조립되어 있는지 확인하세요.',
@@ -315,7 +354,7 @@ export const ko: Dict = {
 }
 
 /** French dictionary. */
-export const fr: Dict = {
+export const fr: Partial<Dict> = {
   'card.title': 'Index de recherche',
   'card.description': 'Recherche de sessions dans la barre latérale avec bascule titre/contenu. La recherche de contenu utilise l\'index indépendant du plugin et ne dépend jamais de l\'index full-text officiel DSH.',
   'card.unavailable': 'Espace de noms des paramètres indisponible : vérifiez que le plugin est assemblé dans le profil.',
@@ -391,7 +430,7 @@ export const fr: Dict = {
 }
 
 /** German dictionary. */
-export const de: Dict = {
+export const de: Partial<Dict> = {
   'card.title': 'Suchindex',
   'card.description': 'Sidebar-Sitzungssuche mit Titel-/Inhaltsmodus-Umschaltung. Die Inhaltssuche verwendet den plugin-eigenen Index und hängt nie vom offiziellen DSH-Volltextindex ab.',
   'card.unavailable': 'Einstellungs-Namensraum nicht verfügbar: Stellen Sie sicher, dass das Plugin im Profil zusammengestellt ist.',
@@ -467,7 +506,7 @@ export const de: Dict = {
 }
 
 /** Italian dictionary. */
-export const it: Dict = {
+export const it: Partial<Dict> = {
   'card.title': 'Indice di ricerca',
   'card.description': 'Ricerca sessioni nella barra laterale con commutazione titolo/contenuto. La ricerca per contenuto utilizza l\'indice indipendente del plugin e non dipende mai dall\'indice full-text ufficiale DSH.',
   'card.unavailable': 'Namespace delle impostazioni non disponibile: verificare che il plugin sia assemblato nel profilo.',
@@ -543,7 +582,7 @@ export const it: Dict = {
 }
 
 /** Russian dictionary. */
-export const ru: Dict = {
+export const ru: Partial<Dict> = {
   'card.title': 'Поисковый индекс',
   'card.description': 'Поиск сессий в боковой панели с переключением «заголовки/содержимое». Поиск по содержимому использует собственный индекс плагина и не зависит от официального полнотекстового индекса DSH.',
   'card.unavailable': 'Пространство имён настроек недоступно: убедитесь, что плагин собран в профиле.',
@@ -619,7 +658,7 @@ export const ru: Dict = {
 }
 
 /** Spanish dictionary. */
-export const es: Dict = {
+export const es: Partial<Dict> = {
   'card.title': 'Índice de búsqueda',
   'card.description': 'Búsqueda de sesiones en la barra lateral con cambio entre título y contenido. La búsqueda de contenido usa el índice propio del plugin y nunca depende del índice de texto completo oficial de DSH.',
   'card.unavailable': 'Espacio de nombres de configuración no disponible: verifique que el plugin esté ensamblado en el perfil.',

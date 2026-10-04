@@ -199,6 +199,11 @@ export class SwitchIndexEngine {
     cwd?: string
     updatedAt?: number
     events: readonly SwitchRawEvent[]
+    /**
+     * 归档标记。缺省时**保留行上现有值**（归档态翻转由 setArchived 单独负责，
+     * 全量重灌不改变归档状态）；显式传入时以传入值为准（重建/导入路径）。
+     */
+    archived?: boolean
   }): void {
     const db = this.requireDb()
     const documents = buildIndexDocuments(input.sessionId, input.events)
@@ -219,14 +224,13 @@ export class SwitchIndexEngine {
       }
       db.prepare(`
         INSERT INTO sessions (session_id, version, title, cwd, updated_at, indexed_at, archived)
-        VALUES (?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           version = excluded.version,
           title = CASE WHEN excluded.title != '' THEN excluded.title ELSE sessions.title END,
           cwd = excluded.cwd,
           updated_at = excluded.updated_at,
-          indexed_at = excluded.indexed_at,
-          archived = 0
+          indexed_at = excluded.indexed_at
       `).run(
         input.sessionId,
         input.version,
@@ -234,14 +238,16 @@ export class SwitchIndexEngine {
         input.cwd ?? '',
         input.updatedAt ?? 0,
         Date.now(),
+        input.archived === true ? 1 : 0,
       )
     })
   }
 
   /**
-   * Write an archived session's header row without any document content:
-   * the official archive never removes logs, and the index mirrors that with
-   * a flag while skipping the content copy on rebuilds.
+   * Write an archived session's header row without any document content.
+   *
+   * @deprecated 旧"归档即软删"语义的遗物,合并包 R1 已改为归档保留 docs;仅剩
+   * 旧快照兼容路径可落 header 行。新代码一律 upsertSession + setArchived。
    */
   upsertArchivedHeader(input: {
     sessionId: string
@@ -276,9 +282,11 @@ export class SwitchIndexEngine {
   }
 
   /**
-   * Apply the official archive set: mark archived ids, unmark the rest.
-   * Clearing the flag forces the next watermark pass to re-ingest the
-   * session's full content (version = -1).
+   * Apply the official archive set: flip the archived flag both ways.
+   *
+   * 合表复用语义（R1）：归档**保留全部 docs 与 FTS**——正文在归档态不可变
+   * （归档门只拒新回合），翻转只是检索域成员资格的变化；恢复也不再需要重灌
+   * （旧实现的 version = -1 强制重读随"归档即删 docs"一并废除）。
    */
   setArchived(archivedIds: ReadonlySet<string>): void {
     const db = this.requireDb()
@@ -287,15 +295,22 @@ export class SwitchIndexEngine {
         { session_id: string; archived: number }[]
       for (const row of rows) {
         const shouldBe = archivedIds.has(row.session_id) ? 1 : 0
-        if (row.archived === shouldBe) continue
-        if (shouldBe === 1) {
-          this.deleteSessionFts(db, row.session_id)
-          db.prepare('DELETE FROM docs WHERE session_id = ?').run(row.session_id)
-          db.prepare('UPDATE sessions SET archived = 1 WHERE session_id = ?').run(row.session_id)
-        } else {
-          db.prepare('UPDATE sessions SET archived = 0, version = -1 WHERE session_id = ?').run(row.session_id)
+        if (row.archived !== shouldBe) {
+          db.prepare('UPDATE sessions SET archived = ? WHERE session_id = ?').run(shouldBe, row.session_id)
         }
       }
+    })
+  }
+
+  /**
+   * Flip one session's archived flag (steward write-side linkage). No-op when
+   * the row does not exist — flag state on an unindexed session is meaningless.
+   */
+  setArchivedOne(sessionId: string, archived: boolean): void {
+    const db = this.requireDb()
+    this.withWriteTx(() => {
+      db.prepare('UPDATE sessions SET archived = ? WHERE session_id = ?')
+        .run(archived ? 1 : 0, sessionId)
     })
   }
 
@@ -322,6 +337,8 @@ export class SwitchIndexEngine {
     sessionId: string
     version: number
     title?: string
+    /** 归档标记随快照往返；旧快照缺省为活跃。 */
+    archived?: boolean
     docs: readonly { seq: number; type: string; surface: string; time: number; text: string }[]
   }): void {
     const db = this.requireDb()
@@ -341,13 +358,14 @@ export class SwitchIndexEngine {
         insertFts.run(Number(result.lastInsertRowid), indexText)
       }
       db.prepare(`
-        INSERT INTO sessions (session_id, version, title, updated_at, indexed_at)
-        VALUES (?, ?, ?, 0, ?)
+        INSERT INTO sessions (session_id, version, title, updated_at, indexed_at, archived)
+        VALUES (?, ?, ?, 0, ?, ?)
         ON CONFLICT(session_id) DO UPDATE SET
           version = excluded.version,
           title = excluded.title,
-          indexed_at = excluded.indexed_at
-      `).run(input.sessionId, input.version, input.title ?? '', Date.now())
+          indexed_at = excluded.indexed_at,
+          archived = excluded.archived
+      `).run(input.sessionId, input.version, input.title ?? '', Date.now(), input.archived === true ? 1 : 0)
     })
   }
 
@@ -391,10 +409,12 @@ export class SwitchIndexEngine {
     return row === undefined ? undefined : rowToSession(row)
   }
 
-  /** Active (non-archived) indexed sessions, newest first. */
+  /** All indexed sessions (active AND archived), newest first — the title
+   * corpus and the manage console both read this; the `archived` flag rides
+   * each row so clients filter locally. */
   listIndexedSessions(): SwitchIndexedSession[] {
     const db = this.requireDb()
-    const rows = db.prepare('SELECT * FROM sessions WHERE archived = 0 ORDER BY updated_at DESC').all() as Record<string, unknown>[]
+    const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all() as Record<string, unknown>[]
     return rows.map(rowToSession)
   }
 
@@ -405,10 +425,10 @@ export class SwitchIndexEngine {
     return rows.map(rowToSession)
   }
 
-  /** Number of active (non-archived) indexed sessions. */
+  /** Number of indexed sessions (active + archived — the whole corpus). */
   countSessions(): number {
     const db = this.requireDb()
-    const row = db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE archived = 0').get() as { n: number | bigint }
+    const row = db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number | bigint }
     return Number(row.n)
   }
 
@@ -433,6 +453,11 @@ export class SwitchIndexEngine {
     types?: readonly SwitchIndexContentType[]
     limit?: number
     sortBy?: SwitchSearchSort
+    /**
+     * 检索域：`'active'` 仅活跃、`'archived'` 仅归档、`'all'`（缺省）两者。
+     * 归档正文入索引后的筛选 chip 即此参数。
+     */
+    archived?: 'active' | 'archived' | 'all'
   }): SwitchSearchHit[] {
     const db = this.requireDb()
     const match = sanitizeFtsQuery(request.query)
@@ -440,6 +465,11 @@ export class SwitchIndexEngine {
     const limit = Math.min(Math.max(1, request.limit ?? 20), 100)
     const types = resolveTypes(request.types)
     const placeholders = types.map(() => '?').join(', ')
+    const archivedClause = request.archived === 'active'
+      ? 'AND s.archived = 0'
+      : request.archived === 'archived'
+        ? 'AND s.archived = 1'
+        : ''
     const docs = db.prepare(`
       SELECT d.doc_id AS docId, d.session_id AS sessionId, d.seq, d.type, d.time, d.text,
              s.title, s.updated_at AS updatedAt, f.rank AS ftsRank
@@ -448,7 +478,7 @@ export class SwitchIndexEngine {
       ) f
       JOIN docs d ON d.doc_id = f.rowid
       JOIN sessions s ON s.session_id = d.session_id
-      WHERE d.type IN (${placeholders}) AND d.surface = 'current' AND s.archived = 0
+      WHERE d.type IN (${placeholders}) AND d.surface = 'current' ${archivedClause}
     `).all(match, MATCH_SCAN_LIMIT, ...types) as {
       docId: number | bigint
       sessionId: string

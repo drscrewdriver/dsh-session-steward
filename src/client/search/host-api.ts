@@ -65,6 +65,11 @@ export interface HostSessionItem {
   title: string
   cwd: string
   updatedAt: number
+  /**
+   * 归档标记（R1 合表语义）。旧宿主半缺省该字段时按 undefined 处理——
+   * 归档筛选 chip 对 undefined 行按「活跃」对待，与旧数据形状兼容。
+   */
+  archived?: boolean
 }
 
 /**
@@ -120,6 +125,32 @@ export interface HostIndexStatus {
   sync?: HostSyncState
   rebuild?: HostRebuildState
   error?: string
+}
+
+/**
+ * POST to the STEWARD fenced route (`/session-steward/api`) — the batch
+ * management console (archive / unarchive / purge) rides the steward subdomain,
+ * per the merged package's route contract (session-* methods stay there).
+ */
+export function callSteward<T>(method: string, body: unknown, timeout = FETCH_TIMEOUT): Promise<Partial<T> & { ok: boolean; error?: string }> {
+  const controller = typeof AbortController === 'undefined' ? undefined : new AbortController()
+  const timer = typeof setTimeout === 'function'
+    ? setTimeout(() => { controller?.abort() }, timeout)
+    : undefined
+  return fetch(`/session-steward/api/${method}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: controller?.signal,
+  })
+    .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+    .catch((err: unknown) => ({
+      ok: false,
+      error: err instanceof DOMException && err.name === 'AbortError' ? '请求超时' : String(err instanceof Error ? err.message : err),
+    }))
+    .finally(() => {
+      if (timer !== undefined) clearTimeout(timer)
+    })
 }
 
 /** Trigger a browser download of the index snapshot from the host route. */

@@ -22,6 +22,8 @@ export interface SwitchSnapshotRecord {
   sessionId: string
   version: number
   title: string
+  /** 归档标记随快照往返；旧快照缺省按活跃导入。 */
+  archived?: boolean
   docs: {
     seq: number
     type: string
@@ -41,7 +43,8 @@ export function snapshotHeader(): string {
 }
 
 /**
- * Export the whole active index as a JSON Lines string.
+ * Export the whole index (active AND archived) as a JSON Lines string.
+ * 归档行带 archived 标记一起导出——快照是完整备份,不是活跃子集。
  * @param engine - the open active engine.
  * @returns the complete snapshot text (header line first).
  */
@@ -53,6 +56,7 @@ export function exportSnapshot(engine: SwitchIndexEngine): string {
       sessionId: session.sessionId,
       version: session.version,
       title: session.title,
+      ...(session.archived ? { archived: true } : {}),
       docs: engine.exportSessionDocs(session.sessionId),
     } satisfies SwitchSnapshotRecord))
   }
@@ -123,6 +127,7 @@ export function parseSnapshot(text: string): SwitchParsedSnapshot {
       sessionId,
       version: typeof record['version'] === 'number' ? record['version'] : 0,
       title: typeof record['title'] === 'string' ? record['title'] : undefined,
+      archived: record['archived'] === true,
       docs,
     })
   }

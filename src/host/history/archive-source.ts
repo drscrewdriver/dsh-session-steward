@@ -185,6 +185,54 @@ export function pruneArchiveFile(
   throw new Error(lastReason)
 }
 
+/**
+ * 把会话 id 加入存储中枢的 `global.archivedSessionIds`（= 归档,prune 的逆操作）。
+ *
+ * 与 prune 同一写入口与协议（备份 + 临时文件 + 原子改名）；已在集合中的 id
+ * 不重复追加。运行中的宿主把集合留在内存里、只在启动时重载 —— 调用方必须
+ * 提示需要重启 DSH。
+ * @param ids - 要加入归档数组的会话 id。
+ * @param log - 可选日志出口。
+ * @param searchPaths - 可选候选路径覆盖（测试注入用）。
+ * @returns 实际新增数量与操作后的集合总数。
+ */
+export function archiveArchiveFile(
+  ids: readonly string[],
+  log?: (msg: string) => void,
+  searchPaths?: readonly string[],
+): {
+  added: number
+  total: number
+  file?: string
+} {
+  const wanted = new Set(ids)
+  let lastReason = 'workspace storage file not found (searched ~/.dsh/storages/workspace.json)'
+  for (const path of searchPaths ?? storageFileCandidates()) {
+    let added = 0
+    let total = 0
+    const outcome = editWorkspaceDocument(path, (document) => {
+      const global = document.global as { archivedSessionIds?: unknown } | undefined
+      const current = global?.archivedSessionIds
+      if (!Array.isArray(current)) throw new Error(`storage hub "${path}" holds no global.archivedSessionIds array`)
+      const existing = new Set(current.filter((id): id is string => typeof id === 'string'))
+      const fresh = ids.filter((id) => !existing.has(id))
+      if (fresh.length === 0) {
+        added = 0
+        total = existing.size
+        return false
+      }
+      document.global = { ...global, archivedSessionIds: [...current, ...fresh] }
+      added = fresh.length
+      total = existing.size + fresh.length
+      return true
+    }, log)
+    if (!outcome.ok) { lastReason = outcome.reason; continue }
+    if (outcome.changed) log?.(`archive: added ${added} ids; total ${total}`)
+    return { added, total, file: outcome.file }
+  }
+  throw new Error(lastReason)
+}
+
 /** 构造同步器期望的惰性来源面，并记录诊断。 */
 export function createArchiveSource(getRegistry: () => StewardRegistryFace | undefined): {
   read: () => StewardArchiveRead

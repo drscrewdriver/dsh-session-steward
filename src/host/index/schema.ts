@@ -9,8 +9,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import { mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
-/** Current switch-search index schema version. Incompatible versions reset in place. */
-export const SWITCH_SEARCH_SCHEMA_VERSION = 4
+/** Current switch-search index schema version. Incompatible versions reset in place.
+ * v5: 归档会话正文入索引（v4 库里归档行是 header-only,语义不兼容 → 就地重置重建）。 */
+export const SWITCH_SEARCH_SCHEMA_VERSION = 5
 
 /** Application id marking files owned by this plugin's index (ASCII "SWIS"). */
 export const SWITCH_SEARCH_APPLICATION_ID = 0x53574954

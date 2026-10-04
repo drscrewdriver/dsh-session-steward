@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { pruneArchiveFile, readArchiveSet, type StewardRegistryFace } from './archive-source.ts'
+import { archiveArchiveFile, pruneArchiveFile, readArchiveSet, type StewardRegistryFace } from './archive-source.ts'
 import { locateSessionUsage } from './purge.ts'
 
 /** 一行历史文件条目（尽力而为的元数据 + 磁盘占用）。 */
@@ -191,4 +191,59 @@ export function pruneHistory(
   }
   log?.(`archive prune requested ${ids.length}, removed ${result.removed}, remaining ${result.remaining}`)
   return { ok: true, removed: result.removed, remaining: result.remaining, requiresRestart: true }
+}
+
+/** 归档结果。 */
+export interface StewardHistoryArchiveResult {
+  ok: boolean
+  /** 本次新加入归档集合的数量（已在集合中的 id 不重复计）。 */
+  added?: number
+  /** 操作后归档集合总数。 */
+  total?: number
+  requiresRestart?: boolean
+  error?: string
+}
+
+/** 单次归档的最大 id 数（与 prune/purge 一致）。 */
+export const MAX_ARCHIVE_IDS = 5000
+
+/**
+ * `session-history-archive`：把会话批量加入官方归档集合（prune 的逆操作）。
+ * 与 prune 同一条纪律：校验入参 → 备份并原子替换存储文件 → 读回校验 →
+ * 要求重启（宿主内存集合只在启动时重载）。会话文件不动、工作区成员表不动
+ * （归档只改可见性,与宿主 archiveSession 的文件语义一致）。
+ * @param payload - `{ sessionIds: string[] }`。
+ * @param log - 可选日志出口。
+ * @param searchPaths - 可选候选路径覆盖（测试注入用）。
+ */
+export function archiveHistory(
+  payload: unknown,
+  log?: (msg: string) => void,
+  searchPaths?: readonly string[],
+): StewardHistoryArchiveResult {
+  const record = payload as { sessionIds?: unknown } | null
+  if (!Array.isArray(record?.sessionIds) || record.sessionIds.length === 0) {
+    return { ok: false, error: '缺少 sessionIds 数组' }
+  }
+  const ids = [...new Set(record.sessionIds.filter((id): id is string => typeof id === 'string' && id !== ''))]
+  if (ids.length === 0) return { ok: false, error: 'sessionIds 无有效值' }
+  if (ids.length > MAX_ARCHIVE_IDS) return { ok: false, error: `单次最多归档 ${MAX_ARCHIVE_IDS} 个` }
+  let result: { added: number; total: number; file?: string }
+  try {
+    result = archiveArchiveFile(ids, log, searchPaths)
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+  // 写后校验：读回文件确认目标 id 确实进了归档集合。
+  const after = readArchiveSet(undefined, searchPaths)
+  if (after.source !== 'storage-file') {
+    return { ok: false, error: '写入后无法读回存储文件，无法确认归档结果' }
+  }
+  const now = new Set(after.ids)
+  const missing = ids.filter((id) => !now.has(id))
+  if (missing.length > 0) {
+    return { ok: false, error: `存储文件在写入后仍缺少 ${missing.length} 个目标 id，归档未生效` }
+  }
+  log?.(`archive requested ${ids.length}, added ${result.added}, total ${result.total}`)
+  return { ok: true, added: result.added, total: result.total, requiresRestart: true }
 }

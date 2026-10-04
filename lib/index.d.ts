@@ -581,6 +581,22 @@ declare function pruneArchiveFile(ids: readonly string[], log?: (msg: string) =>
   remaining: number;
   file?: string;
 };
+/**
+ * 把会话 id 加入存储中枢的 `global.archivedSessionIds`（= 归档,prune 的逆操作）。
+ *
+ * 与 prune 同一写入口与协议（备份 + 临时文件 + 原子改名）；已在集合中的 id
+ * 不重复追加。运行中的宿主把集合留在内存里、只在启动时重载 —— 调用方必须
+ * 提示需要重启 DSH。
+ * @param ids - 要加入归档数组的会话 id。
+ * @param log - 可选日志出口。
+ * @param searchPaths - 可选候选路径覆盖（测试注入用）。
+ * @returns 实际新增数量与操作后的集合总数。
+ */
+declare function archiveArchiveFile(ids: readonly string[], log?: (msg: string) => void, searchPaths?: readonly string[]): {
+  added: number;
+  total: number;
+  file?: string;
+};
 //#endregion
 //#region src/host/health/decode.d.ts
 /** 一次读取的统计与问题清单。 */
@@ -1009,11 +1025,17 @@ declare class SwitchIndexEngine {
     cwd?: string;
     updatedAt?: number;
     events: readonly SwitchRawEvent[];
+    /**
+     * 归档标记。缺省时**保留行上现有值**（归档态翻转由 setArchived 单独负责，
+     * 全量重灌不改变归档状态）；显式传入时以传入值为准（重建/导入路径）。
+     */
+    archived?: boolean;
   }): void;
   /**
-   * Write an archived session's header row without any document content:
-   * the official archive never removes logs, and the index mirrors that with
-   * a flag while skipping the content copy on rebuilds.
+   * Write an archived session's header row without any document content.
+   *
+   * @deprecated 旧"归档即软删"语义的遗物,合并包 R1 已改为归档保留 docs;仅剩
+   * 旧快照兼容路径可落 header 行。新代码一律 upsertSession + setArchived。
    */
   upsertArchivedHeader(input: {
     sessionId: string;
@@ -1023,11 +1045,18 @@ declare class SwitchIndexEngine {
     updatedAt?: number;
   }): void;
   /**
-   * Apply the official archive set: mark archived ids, unmark the rest.
-   * Clearing the flag forces the next watermark pass to re-ingest the
-   * session's full content (version = -1).
+   * Apply the official archive set: flip the archived flag both ways.
+   *
+   * 合表复用语义（R1）：归档**保留全部 docs 与 FTS**——正文在归档态不可变
+   * （归档门只拒新回合），翻转只是检索域成员资格的变化；恢复也不再需要重灌
+   * （旧实现的 version = -1 强制重读随"归档即删 docs"一并废除）。
    */
   setArchived(archivedIds: ReadonlySet<string>): void;
+  /**
+   * Flip one session's archived flag (steward write-side linkage). No-op when
+   * the row does not exist — flag state on an unindexed session is meaningless.
+   */
+  setArchivedOne(sessionId: string, archived: boolean): void;
   /** One session's stored documents, ascending seq (snapshot export face). */
   exportSessionDocs(sessionId: string): {
     seq: number;
@@ -1045,6 +1074,8 @@ declare class SwitchIndexEngine {
     sessionId: string;
     version: number;
     title?: string;
+    /** 归档标记随快照往返；旧快照缺省为活跃。 */
+    archived?: boolean;
     docs: readonly {
       seq: number;
       type: string;
@@ -1064,11 +1095,13 @@ declare class SwitchIndexEngine {
   }): void;
   /** One indexed session row, or undefined. */
   getSession(sessionId: string): SwitchIndexedSession | undefined;
-  /** Active (non-archived) indexed sessions, newest first. */
+  /** All indexed sessions (active AND archived), newest first — the title
+   * corpus and the manage console both read this; the `archived` flag rides
+   * each row so clients filter locally. */
   listIndexedSessions(): SwitchIndexedSession[];
   /** Archived (soft-deleted) sessions, newest first — the archive viewer face. */
   listArchived(): SwitchIndexedSession[];
-  /** Number of active (non-archived) indexed sessions. */
+  /** Number of indexed sessions (active + archived — the whole corpus). */
   countSessions(): number;
   /** Number of archived (soft-deleted) sessions. */
   countArchived(): number;
@@ -1086,6 +1119,11 @@ declare class SwitchIndexEngine {
     types?: readonly SwitchIndexContentType[];
     limit?: number;
     sortBy?: SwitchSearchSort;
+    /**
+     * 检索域：`'active'` 仅活跃、`'archived'` 仅归档、`'all'`（缺省）两者。
+     * 归档正文入索引后的筛选 chip 即此参数。
+     */
+    archived?: 'active' | 'archived' | 'all';
   }): SwitchSearchHit[];
   private requireDb;
 }
@@ -1180,12 +1218,6 @@ declare class SwitchWatermarkSync {
    */
   poll(): Promise<SwitchSyncState>;
   private runPass;
-  /**
-   * Fold titles for archived header-only rows that never got one (archived
-   * before first indexing). Bounded: only rows with an empty title, and the
-   * title fold reads the log without ingesting content.
-   */
-  private backfillArchivedTitles;
   /** Fold latest titles for changed sessions into the index header rows. */
   private backfillTitles;
 }
@@ -1301,6 +1333,8 @@ interface SwitchImportRecord {
   sessionId: string;
   version: number;
   title?: string;
+  /** 归档标记（旧快照缺省活跃）。 */
+  archived?: boolean;
   docs: readonly {
     seq: number;
     type: string;
@@ -1379,6 +1413,26 @@ interface StewardHistoryPruneResult {
  * @param searchPaths - 可选候选路径覆盖（测试注入用）。
  */
 declare function pruneHistory(payload: unknown, log?: (msg: string) => void, searchPaths?: readonly string[]): StewardHistoryPruneResult;
+/** 归档结果。 */
+interface StewardHistoryArchiveResult {
+  ok: boolean;
+  /** 本次新加入归档集合的数量（已在集合中的 id 不重复计）。 */
+  added?: number;
+  /** 操作后归档集合总数。 */
+  total?: number;
+  requiresRestart?: boolean;
+  error?: string;
+}
+/**
+ * `session-history-archive`：把会话批量加入官方归档集合（prune 的逆操作）。
+ * 与 prune 同一条纪律：校验入参 → 备份并原子替换存储文件 → 读回校验 →
+ * 要求重启（宿主内存集合只在启动时重载）。会话文件不动、工作区成员表不动
+ * （归档只改可见性,与宿主 archiveSession 的文件语义一致）。
+ * @param payload - `{ sessionIds: string[] }`。
+ * @param log - 可选日志出口。
+ * @param searchPaths - 可选候选路径覆盖（测试注入用）。
+ */
+declare function archiveHistory(payload: unknown, log?: (msg: string) => void, searchPaths?: readonly string[]): StewardHistoryArchiveResult;
 //#endregion
 //#region src/host/history/purge.d.ts
 /** 一个归档会话在磁盘上的实体与占用。 */
@@ -1770,7 +1824,8 @@ declare function scanSessions(options: {
 //#endregion
 //#region src/host/index/snapshot.d.ts
 /**
- * Export the whole active index as a JSON Lines string.
+ * Export the whole index (active AND archived) as a JSON Lines string.
+ * 归档行带 archived 标记一起导出——快照是完整备份,不是活跃子集。
  * @param engine - the open active engine.
  * @returns the complete snapshot text (header line first).
  */
@@ -1859,6 +1914,18 @@ interface StewardRuntime {
    * 不影响任何判定结果）。`apply()` 总是提供实例。
    */
   cache?: HealthCache;
+  /**
+   * 搜索索引联动钩子（可选）：管家写侧操作成功后同步翻索引的归档标记 /
+   * 删除索引行，消灭"搜索还挂着 30s 前的幽灵"的窗口。缺省（单测/降级）为无联动。
+   */
+  index?: {
+    /** 批量归档成功 → 翻 archived=true。 */
+    onArchive: (sessionIds: readonly string[]) => void;
+    /** 取消归档成功 → 翻 archived=false。 */
+    onUnarchive: (sessionIds: readonly string[]) => void;
+    /** 清理成功（物理删除）→ 索引行整个移除。 */
+    onPurged: (sessionIds: readonly string[]) => void;
+  };
 }
 /**
  * 支持的路由方法（按子域分组；用于对外声明与测试断言）。
@@ -1866,7 +1933,7 @@ interface StewardRuntime {
  * `session-history-prune` 与 `session-history-purge` 是**两件事**，不可合并：
  * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
  */
-declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune", "session-history-purge"];
+declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-archive", "session-history-prune", "session-history-purge"];
 declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair", "session-health-source-migrate"];
 /** 搜索索引子域方法（`/switch-search/api`；index-export/import 走原始体，其余 JSON）。 */
 declare const INDEX_METHODS: readonly ["list-sessions", "content-search", "search-status", "index-status", "index-rebuild", "index-export", "index-import"];
@@ -1965,4 +2032,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context, config?: Partial<StewardConfig & SwitchSearchConfig>): void;
 //#endregion
-export { Config, DEFAULT_CONFIG, DEFAULT_INDEX_LAYOUT, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, INDEX_METHODS, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG, SearchRuntime, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, type SwitchArchiveDiagnostics, SwitchIndexEngine, SwitchIndexServiceState, type SwitchSearchConfig, SwitchWatermarkSync, V4_HOST_MIN, apply, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createArchiveSource, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, detectSteward, dirSize, discoverSessions, editWorkspaceDocument, exportSnapshot, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleIndexMethod, handleMethod, importIntoIndex, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, parseSnapshot, prescribe, probePeer, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, rebuildIndex, recoverIndex, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
+export { Config, DEFAULT_CONFIG, DEFAULT_INDEX_LAYOUT, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, INDEX_METHODS, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG, SearchRuntime, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, type SwitchArchiveDiagnostics, SwitchIndexEngine, SwitchIndexServiceState, type SwitchSearchConfig, SwitchWatermarkSync, V4_HOST_MIN, apply, archiveArchiveFile, archiveHistory, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createArchiveSource, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, detectSteward, dirSize, discoverSessions, editWorkspaceDocument, exportSnapshot, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleIndexMethod, handleMethod, importIntoIndex, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, parseSnapshot, prescribe, probePeer, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, rebuildIndex, recoverIndex, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
