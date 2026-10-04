@@ -1818,26 +1818,26 @@ declare function detectSteward(): PeerPresence;
 //#region src/index.d.ts
 /** 本插件声明的宿主服务（与 toggle 相同的注入面）。 */
 declare const inject: string[];
-/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7：volatile 字段即设置表单。 */
+/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7+：volatile 字段即设置表单。 */
 declare const Config: z<Schemastery.ObjectS<NoInfer<{
-  enabled: z<boolean, boolean, "volatile-defined">;
-  historyFiles: z<boolean, boolean, "volatile-defined">;
-  healthCheck: z<boolean, boolean, "volatile-defined">;
-  search: z<boolean, boolean, "volatile-defined">;
-  defaultMode: z<"title" | "content", "title" | "content", "volatile-defined">;
-  autoSync: z<boolean, boolean, "volatile-defined">;
-  syncIntervalMs: z<number, number, "volatile-defined">;
-  archiveKeep: z<number, number, "volatile-defined">;
+  enabled: z<boolean, boolean, "defined">;
+  historyFiles: z<boolean, boolean, "defined">;
+  healthCheck: z<boolean, boolean, "defined">;
+  search: z<boolean, boolean, "defined">;
+  defaultMode: z<"title" | "content", "title" | "content", "defined">;
+  autoSync: z<boolean, boolean, "defined">;
+  syncIntervalMs: z<number, number, "defined">;
+  archiveKeep: z<number, number, "defined">;
   indexDir: z<string, string, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
-  enabled: z<boolean, boolean, "volatile-defined">;
-  historyFiles: z<boolean, boolean, "volatile-defined">;
-  healthCheck: z<boolean, boolean, "volatile-defined">;
-  search: z<boolean, boolean, "volatile-defined">;
-  defaultMode: z<"title" | "content", "title" | "content", "volatile-defined">;
-  autoSync: z<boolean, boolean, "volatile-defined">;
-  syncIntervalMs: z<number, number, "volatile-defined">;
-  archiveKeep: z<number, number, "volatile-defined">;
+  enabled: z<boolean, boolean, "defined">;
+  historyFiles: z<boolean, boolean, "defined">;
+  healthCheck: z<boolean, boolean, "defined">;
+  search: z<boolean, boolean, "defined">;
+  defaultMode: z<"title" | "content", "title" | "content", "defined">;
+  autoSync: z<boolean, boolean, "defined">;
+  syncIntervalMs: z<number, number, "defined">;
+  archiveKeep: z<number, number, "defined">;
   indexDir: z<string, string, "defined">;
 }>>, "plain">;
 /** 运行时依赖。 */

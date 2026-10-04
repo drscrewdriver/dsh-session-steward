@@ -129,17 +129,30 @@ function readVolatileValue<T>(value: T | VolatileRef<T> | undefined): T | undefi
   return value as T | undefined
 }
 
-/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7：volatile 字段即设置表单。 */
+/**
+ * `.volatile()` 探针回退（preset-manager 的 volatile breakpoint 同款）：宿主
+ * schemastery 只在 0.1.7+ 线提供 `.volatile()`，老线上该方法是 undefined ——
+ * 在模块加载期链式调用直接 TypeError，插件整包起不来。这里探测到才链，探测
+ * 不到就返回普通字段（老线的配置只来自组合入口，无设置表单，行为正确）。
+ */
+function withVolatile<T extends { volatile?: unknown }>(field: T): T {
+  if (field !== null && typeof field === 'object' && typeof field.volatile === 'function') {
+    return (field as { volatile: () => T }).volatile()
+  }
+  return field
+}
+
+/** 运行时配置 schema（与 src/config.ts 的形状保持一致）。0.1.7+：volatile 字段即设置表单。 */
 export const Config = z.object({
-  enabled: z.boolean().default(true).volatile(),
-  historyFiles: z.boolean().default(true).volatile(),
-  healthCheck: z.boolean().default(true).volatile(),
-  search: z.boolean().default(true).volatile(),
-  defaultMode: z.union(['title', 'content']).default('title').volatile(),
-  autoSync: z.boolean().default(true).volatile(),
-  syncIntervalMs: z.number().default(30_000).volatile(),
-  archiveKeep: z.number().default(2).volatile(),
-  indexDir: z.string().default(''),
+  enabled: withVolatile(z.boolean().default(true)),
+  historyFiles: withVolatile(z.boolean().default(true)),
+  healthCheck: withVolatile(z.boolean().default(true)),
+  search: withVolatile(z.boolean().default(true)),
+  defaultMode: withVolatile(z.union(['title', 'content']).default('title')),
+  autoSync: withVolatile(z.boolean().default(true)),
+  syncIntervalMs: withVolatile(z.number().default(30_000)),
+  archiveKeep: withVolatile(z.number().default(2)),
+  indexDir: withVolatile(z.string().default('')),
 })
 
 /** 单次请求体的上限（防御无界读取）。 */
