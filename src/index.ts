@@ -32,8 +32,9 @@ import {
   type SwitchSearchConfig,
 } from './config.ts'
 import { archiveHistory, listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
+import { listFavorites, setFavoriteState } from './host/history/favorites.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
-import { purgeHistory } from './host/history/purge.ts'
+import { locateSessionUsage, purgeHistory } from './host/history/purge.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
 import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
@@ -307,6 +308,8 @@ export const HISTORY_METHODS = [
   'session-history-archive',
   'session-history-prune',
   'session-history-purge',
+  'session-history-favorites-list',
+  'session-history-favorite-set',
 ] as const
 export const HEALTH_METHODS = [
   'session-health-status',
@@ -459,7 +462,7 @@ async function contentSearch(
   srt: SearchRuntime,
   payload: unknown,
 ): Promise<{ ok: boolean; items?: unknown[]; error?: string }> {
-  const record = payload as { query?: unknown; limit?: unknown; types?: unknown; sortBy?: unknown; archived?: unknown } | null
+  const record = payload as { query?: unknown; limit?: unknown; types?: unknown; sortBy?: unknown; archived?: unknown; from?: unknown; to?: unknown } | null
   const query = typeof record?.query === 'string' ? record.query.trim() : ''
   if (query === '') return { ok: false, error: '缺少 query' }
   // 检索域 chip（全部/活跃/归档）；未知值回退 'all'，新旧客户端互相兼容。
@@ -467,6 +470,9 @@ async function contentSearch(
     = record?.archived === 'active' ? 'active'
     : record?.archived === 'archived' ? 'archived'
     : 'all'
+  // 日期范围（R6）:本地日界,结束日含当天;无效值静默忽略（新旧客户端兼容）。
+  const fromMs = dayBoundaryMs(record?.from)
+  const toMs = record?.to === undefined ? undefined : dayBoundaryMs(record?.to, true)
   const requestedLimit = typeof record?.limit === 'number' && Number.isSafeInteger(record.limit)
     ? record.limit
     : DEFAULT_LIMIT
@@ -488,7 +494,7 @@ async function contentSearch(
   try {
     return {
       ok: true,
-      items: index.engine.search({ query, types, limit, sortBy, archived }),
+      items: index.engine.search({ query, types, limit, sortBy, archived, from: fromMs, to: toMs }),
     }
   } catch (err) {
     return { ok: false, error: String(err instanceof Error ? err.message : err) }
@@ -721,6 +727,21 @@ async function runMemoryArchiveOps(
   return { succeeded, failures }
 }
 
+/** 收藏文件候选（与管家其余域同一 dshHome 纪律）。 */
+function favoritesPathsFor(dshHome: string): string[] {
+  return [join(dshHome, 'storages', 'session-steward-favorites.json')]
+}
+
+/** 本地日界（YYYY-MM-DD → epoch ms;nextDay 为排他上界）。非法返回 undefined。 */
+function dayBoundaryMs(value: unknown, nextDay = false): number | undefined {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return undefined
+  if (nextDay) date.setDate(date.getDate() + 1)
+  return date.getTime()
+}
+
 /** 从 payload 抽合法 sessionIds（与 prune/purge 的入参纪律一致）；不合法返回 undefined。 */
 function validSessionIds(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined
@@ -800,6 +821,41 @@ export async function handleMethod(
   if (method === 'session-history-purge') {
     const request = (payload ?? {}) as { sessionIds?: unknown }
     const ids = validSessionIds(request.sessionIds)
+    if (ids === undefined) return { ok: false, error: '缺少 sessionIds 数组' }
+    // 内存路径优先（P1:替换后的 registry 子类带 deleteSession 全痕删除,
+    // 官方 0.1.7/0.2.0 双线可用）—— 即时生效免重启;失败按会话隔离。
+    const mem = runtime.registry() as (MemoryRegistryFace & {
+      deleteSession?: (sessionId: string) => Promise<{ ok: boolean; skipped?: boolean; error?: string }>
+      dshHome?: string
+    }) | undefined
+    if (typeof mem?.deleteSession === 'function') {
+      mem.dshHome = runtime.dshHome
+      const succeeded: string[] = []
+      const failures: { sessionId: string; reason: string }[] = []
+      const usage = locateSessionUsage(ids, runtime.dshHome)
+      let freedBytes = 0
+      for (const id of ids) {
+        freedBytes += usage.get(id)?.bytes ?? 0
+        freedBytes += usage.get(id)?.cacheBytes ?? 0
+      }
+      for (const id of ids) {
+        try {
+          const outcome = await mem.deleteSession(id)
+          if (outcome.ok) succeeded.push(id)
+          else failures.push({ sessionId: id, reason: outcome.error ?? '删除失败' })
+        } catch (err) {
+          failures.push({ sessionId: id, reason: String(err instanceof Error ? err.message : err) })
+        }
+      }
+      runtime.index?.onPurged(succeeded)
+      return {
+        ok: true,
+        purged: succeeded.length,
+        freedBytes,
+        requiresRestart: false,
+        ...(failures.length === 0 ? {} : { failures }),
+      }
+    }
     const result = purgeHistory(payload, runtime.log, {
       dshHome: runtime.dshHome,
       searchPaths: storagePathsFor(runtime.dshHome),
@@ -810,6 +866,17 @@ export async function handleMethod(
       runtime.index?.onPurged(ids.filter((id) => !failed.has(id)))
     }
     return result
+  }
+
+  if (method === 'session-history-favorites-list') {
+    return { ok: true, favorites: listFavorites(favoritesPathsFor(runtime.dshHome)) }
+  }
+  if (method === 'session-history-favorite-set') {
+    const request = (payload ?? {}) as { sessionId?: unknown; favorite?: unknown }
+    const sessionId = asSessionId(request.sessionId)
+    if (sessionId === undefined) return { ok: false, error: '缺少合法的 sessionId' }
+    if (typeof request.favorite !== 'boolean') return { ok: false, error: '缺少 favorite 布尔值' }
+    return setFavoriteState(sessionId, request.favorite, favoritesPathsFor(runtime.dshHome))
   }
 
   if (method === 'session-health-status') {

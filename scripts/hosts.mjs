@@ -39,6 +39,10 @@ export const dshPeers = Object.freeze([
   '@deepseek-ai/dsh-client-ui-settings-general',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-session',
+  // P1 服务替换面:子类继承官方 WorkspaceRegistry;spill 清理软导入。
+  // npm 实查 8 条抽样线全覆盖(0.1.0-rc.2 → 0.2.0-rc.2)。
+  '@deepseek-ai/dsh-workspace',
+  '@deepseek-ai/dsh-spill-local',
 ])
 
 /** 生成枚举 OR-list 范围（与 AM 同形：`0.1.0-rc.2 || 0.1.0-rc.3 || ...`）。 */
@@ -51,5 +55,7 @@ export function devHostDeps() {
   return {
     '@deepseek-ai/dsh-client-ui-slots': developmentHost,
     '@deepseek-ai/dsh-session': developmentHost,
+    '@deepseek-ai/dsh-workspace': developmentHost,
+    '@deepseek-ai/dsh-spill-local': developmentHost,
   }
 }

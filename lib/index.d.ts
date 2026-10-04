@@ -1132,6 +1132,10 @@ declare class SwitchIndexEngine {
      * 归档正文入索引后的筛选 chip 即此参数。
      */
     archived?: 'active' | 'archived' | 'all';
+    /** 更新时间下界（epoch ms,含）。 */
+    from?: number;
+    /** 更新时间上界（epoch ms,排他）。 */
+    to?: number;
   }): SwitchSearchHit[];
   private requireDb;
 }
@@ -1990,7 +1994,7 @@ interface StewardRuntime {
  * `session-history-prune` 与 `session-history-purge` 是**两件事**，不可合并：
  * prune = 取消归档状态（可逆，会话回到侧边栏）；purge = 清理归档文件（不可逆，真删实体）。
  */
-declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-archive", "session-history-prune", "session-history-purge"];
+declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-archive", "session-history-prune", "session-history-purge", "session-history-favorites-list", "session-history-favorite-set"];
 declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair", "session-health-source-migrate"];
 /** 搜索索引子域方法（`/switch-search/api`；index-export/import 走原始体，其余 JSON）。 */
 declare const INDEX_METHODS: readonly ["list-sessions", "content-search", "search-status", "index-status", "index-rebuild", "index-export", "index-import"];

@@ -2,10 +2,19 @@
 #
 # 通过官方 CLI 安装时 ——
 #
-#   dsh plugin --profile <name> add dsh-session-steward
+#   dsh plugin --profile web add dsh-session-steward
 #
-# —— 命令会把 `dsh-session-steward` 追加到 bundle 栈，profile 启动时合并本补丁
-# （单个 insert，插入本插件行）。
+# —— 命令会把 `dsh-session-steward` 追加到 bundle 栈，profile 启动时合并本补丁。
+#
+# P1 服务替换（AM 架构轻量版）：官方 `workspace` 行替换为管家子类
+# （dsh-session-steward/registry = StewardWorkspaceRegistry）——继承官方全部
+# 行为，叠加删除墓碑/冷复用探针与 deleteSession 全痕删除，归档/取消归档/
+# 清理全走宿主内存 API 免重启。子类只继承+覆写，不改官方行为面；替换失败的
+# 兜底是管家路由的文件路径（requiresRestart=true）。
+- id: workspace
+  disabled: true
 - insert:
     - id: dsh-session-steward
       name: 'dsh-session-steward'
+    - id: workspace-steward
+      name: 'dsh-session-steward/registry'

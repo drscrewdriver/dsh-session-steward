@@ -56,6 +56,31 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   const [confirmPurge, setConfirmPurge] = useState(false)
   // 检索域过滤（全部/活跃/归档）——与搜索面板同一组 chip 语义。
   const [domain, setDomain] = useState<'all' | 'active' | 'archived'>('all')
+  // 收藏（R6）:host 侧 JSON 域,挂载取一次,星标切换就地更新。
+  const [favorites, setFavorites] = useState<ReadonlySet<string>>(new Set())
+  const [favoritesOnly, setFavoritesOnly] = useState(false)
+
+  // 收藏集合:挂载取一次。
+  useEffect(() => {
+    let cancelled = false
+    void callSteward<{ favorites?: string[] }>('session-history-favorites-list', {}).then((res) => {
+      if (cancelled || !res.ok || !Array.isArray(res.favorites)) return
+      setFavorites(new Set(res.favorites))
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  /** 星标切换:写 host 收藏域,就地更新本地集合。 */
+  const toggleFavorite = (sessionId: string): void => {
+    const next = !favorites.has(sessionId)
+    setFavorites(prev => {
+      const copy = new Set(prev)
+      if (next) copy.add(sessionId)
+      else copy.delete(sessionId)
+      return copy
+    })
+    void callSteward('session-history-favorite-set', { sessionId, favorite: next })
+  }
 
   // 语料：挂载取一次;批量成功后 setSessions(null) 重取（宿主半已联动索引）。
   useEffect(() => {
@@ -76,6 +101,7 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     for (const item of sessions) {
       if (domain === 'active' && item.archived === true) continue
       if (domain === 'archived' && item.archived !== true) continue
+      if (favoritesOnly && !favorites.has(item.sessionId)) continue
       const list = byCwd.get(item.cwd)
       if (list === undefined) byCwd.set(item.cwd, [item])
       else list.push(item)
@@ -83,7 +109,7 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     return [...byCwd.entries()]
       .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
       .map(([cwd, items]) => ({ cwd, items }))
-  }, [sessions, domain])
+  }, [sessions, domain, favoritesOnly, favorites])
 
   /** 批量动作;删除两步确认。 */
   const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
@@ -157,6 +183,13 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
         'aria-pressed': domain === id,
         onClick: () => { setDomain(id) },
       }, translate(t, `domain.${id}` as LocaleKey))),
+      createElement('button', {
+        key: 'favorites',
+        type: 'button',
+        className: `dsws_chip${favoritesOnly ? ' dsws_chipActive' : ''}`,
+        'aria-pressed': favoritesOnly,
+        onClick: () => { setFavoritesOnly(v => !v) },
+      }, `★ ${translate(t, 'filter.favorites')}`),
     ]),
     createElement('div', { key: 'hint', className: 'dsws_manageHint' }, [
       translate(t, 'manage.hint'),
@@ -194,6 +227,14 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
                 onChange: () => { toggleOne(item.sessionId) },
                 onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
               })),
+            createElement('button', {
+              key: 'star',
+              type: 'button',
+              className: 'dsws_check',
+              title: translate(t, favorites.has(item.sessionId) ? 'star.on' : 'star.off'),
+              style: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '0 2px', color: favorites.has(item.sessionId) ? 'var(--dsw-alias-state-warn-label, #d97706)' : 'var(--dsw-alias-label-caption)' },
+              onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation(); toggleFavorite(item.sessionId) },
+            }, favorites.has(item.sessionId) ? '★' : '☆'),
             createElement('span', { key: 'x', className: 'dsws_titleText' }, item.title || translate(t, 'panel.untitled')),
             item.archived === true && createElement('span', { key: 'arch', className: 'dsws_tagArch' }, translate(t, 'tag.archived')),
             createElement('span', { key: 'tag', className: 'dsws_tag' }, fmtTime(item.updatedAt)),

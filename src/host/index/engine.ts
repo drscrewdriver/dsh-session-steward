@@ -458,6 +458,10 @@ export class SwitchIndexEngine {
      * 归档正文入索引后的筛选 chip 即此参数。
      */
     archived?: 'active' | 'archived' | 'all'
+    /** 更新时间下界（epoch ms,含）。 */
+    from?: number
+    /** 更新时间上界（epoch ms,排他）。 */
+    to?: number
   }): SwitchSearchHit[] {
     const db = this.requireDb()
     const match = sanitizeFtsQuery(request.query)
@@ -470,6 +474,18 @@ export class SwitchIndexEngine {
       : request.archived === 'archived'
         ? 'AND s.archived = 1'
         : ''
+    // 日期范围（R6）:s.updated_at 上的半开区间 [from, to)。
+    const dateClauses: string[] = []
+    const dateParams: number[] = []
+    if (typeof request.from === 'number' && Number.isFinite(request.from)) {
+      dateClauses.push('AND s.updated_at >= ?')
+      dateParams.push(request.from)
+    }
+    if (typeof request.to === 'number' && Number.isFinite(request.to)) {
+      dateClauses.push('AND s.updated_at < ?')
+      dateParams.push(request.to)
+    }
+    const dateClause = dateClauses.join(' ')
     const docs = db.prepare(`
       SELECT d.doc_id AS docId, d.session_id AS sessionId, d.seq, d.type, d.time, d.text,
              s.title, s.updated_at AS updatedAt, f.rank AS ftsRank
@@ -478,8 +494,8 @@ export class SwitchIndexEngine {
       ) f
       JOIN docs d ON d.doc_id = f.rowid
       JOIN sessions s ON s.session_id = d.session_id
-      WHERE d.type IN (${placeholders}) AND d.surface = 'current' ${archivedClause}
-    `).all(match, MATCH_SCAN_LIMIT, ...types) as {
+      WHERE d.type IN (${placeholders}) AND d.surface = 'current' ${archivedClause} ${dateClause}
+    `).all(match, MATCH_SCAN_LIMIT, ...types, ...dateParams) as {
       docId: number | bigint
       sessionId: string
       seq: number

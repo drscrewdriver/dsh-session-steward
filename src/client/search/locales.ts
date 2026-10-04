@@ -106,6 +106,11 @@ export const zh = {
   'panel.index.count': '索引 {n}',
   'panel.index.rebuilding': '整理中 {done}/{total}',
   'panel.index.rebuild': '整理',
+  'filter.favorites': '收藏',
+  'date.from': '开始日期',
+  'date.to': '结束日期',
+  'star.on': '取消收藏',
+  'star.off': '收藏',
 } as const
 
 export type LocaleKey = keyof typeof zh
@@ -209,6 +214,11 @@ export const en: Dict = {
   'panel.index.count': 'Index {n}',
   'panel.index.rebuilding': 'Rebuilding {done}/{total}',
   'panel.index.rebuild': 'Rebuild',
+  'filter.favorites': 'Favorites',
+  'date.from': 'From date',
+  'date.to': 'To date',
+  'star.on': 'Unfavorite',
+  'star.off': 'Favorite',
 }
 
 /** Japanese dictionary. */

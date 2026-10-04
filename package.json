@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.5.0-beta.7",
+  "version": "0.5.0-beta.8",
   "publishConfig": {
     "tag": "dsh-0.1.7"
   },
@@ -35,7 +35,8 @@
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./locale/*.json": "./locale/*.json",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./registry": "./lib/registry.js"
   },
   "dsh": {
     "bundle": {
@@ -58,26 +59,28 @@
     "test:client": "node tests/client-store.test.mjs && node tests/client-panel-key.test.mjs && node tests/client-styles.test.mjs && node --import tsx tests/client-platform.test.mjs && node --import tsx tests/client-host-api.test.mjs && node --import tsx tests/client-locales.test.mjs && node --import tsx tests/client-open-session.test.mjs"
   },
   "files": [
-    "lib/index.js",
-    "lib/index.d.ts",
-    "lib/client.js",
-    "src",
-    "locale",
-    "cordis.patch.yml",
-    "dsh.plugin.json",
-    "screenshots.json",
-    "README.md",
+    "CHANGELOG.ja.md",
+    "CHANGELOG.ko.md",
+    "CHANGELOG.md",
+    "INSTALL.ja.md",
+    "INSTALL.ko.md",
+    "INSTALL.md",
+    "INSTALL.zh.md",
+    "LICENSE",
     "README.en.md",
     "README.ja.md",
     "README.ko.md",
-    "INSTALL.md",
-    "INSTALL.zh.md",
-    "INSTALL.ja.md",
-    "INSTALL.ko.md",
-    "CHANGELOG.md",
-    "CHANGELOG.ja.md",
-    "CHANGELOG.ko.md",
-    "LICENSE"
+    "README.md",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "lib/client.js",
+    "lib/index.d.ts",
+    "lib/index.js",
+    "lib/registry.d.ts",
+    "lib/registry.js",
+    "locale",
+    "screenshots.json",
+    "src"
   ],
   "engines": {
     "node": ">=20",
@@ -92,7 +95,9 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.2 || 0.1.0-rc.3 || 0.1.0-rc.6 || 0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.4",
     "react": "^18.2.0",
-    "@deepseek-ai/dsh-session": "0.1.0-rc.2 || 0.1.0-rc.3 || 0.1.0-rc.6 || 0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2"
+    "@deepseek-ai/dsh-session": "0.1.0-rc.2 || 0.1.0-rc.3 || 0.1.0-rc.6 || 0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-workspace": "0.1.0-rc.2 || 0.1.0-rc.3 || 0.1.0-rc.6 || 0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2",
+    "@deepseek-ai/dsh-spill-local": "0.1.0-rc.2 || 0.1.0-rc.3 || 0.1.0-rc.6 || 0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-client-locale": {

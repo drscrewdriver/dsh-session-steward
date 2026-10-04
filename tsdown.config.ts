@@ -16,7 +16,7 @@ export default defineConfig([
   // 主机半身：src/index.ts 产出 lib/index.js（ESM / node）。
   {
     name: `${ID}/lib`,
-    entry: { index: 'src/index.ts' },
+    entry: { index: 'src/index.ts', registry: 'src/host/registry/archive-registry.ts' },
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
@@ -32,6 +32,9 @@ export default defineConfig([
         '@deepseek-ai/cordis',
         '@deepseek-ai/schemastery',
         '@deepseek-ai/dsh-session',
+        // P1 服务替换的宿主包:运行时由 profile 树解析（枚举 peer）。
+        '@deepseek-ai/dsh-workspace',
+        '@deepseek-ai/dsh-spill-local',
         // 可选加速驱动（optionalDependencies）：缺失时引擎回退 node:sqlite，
         // 打包器绝不能尝试解析它。
         'better-sqlite3',

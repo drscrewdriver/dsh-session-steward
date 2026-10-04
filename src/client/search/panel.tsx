@@ -127,8 +127,8 @@ const SORT_CHIPS: readonly { id: HostSortMode; labelKey: LocaleKey }[] = [
  * @param archivedFilter - the retrieval-domain chip (all/active/archived).
  * @returns an opaque key, stable for equal inputs.
  */
-function contentRequestKey(normalized: string, contentType: ContentType, sortBy: HostSortMode, archivedFilter: ArchivedDomain): string {
-  return `${normalized}\u0000${contentType}\u0000${sortBy}\u0000${archivedFilter}`
+function contentRequestKey(normalized: string, contentType: ContentType, sortBy: HostSortMode, archivedFilter: ArchivedDomain, dateRange: { from: string; to: string }): string {
+  return `${normalized}\u0000${contentType}\u0000${sortBy}\u0000${archivedFilter}\u0000${dateRange.from}\u0000${dateRange.to}`
 }
 
 /**
@@ -327,6 +327,9 @@ function SwitchPanel({
   const [contentType, setContentType] = useState<ContentType>('all')
   // 检索域 chip：标题/内容两模式共用（R1——归档正文已入索引）。
   const [archivedFilter, setArchivedFilter] = useState<ArchivedDomain>('all')
+  // 日期范围（R6）:YYYY-MM-DD,空串 = 不限;结束日含当天（宿主半排他上界 +1d）。
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [sortBy, setSortByState] = useState<HostSortMode>(readStoredSort)
   const setSortBy = (next: HostSortMode): void => {
     writeStoredSort(next)
@@ -412,7 +415,7 @@ function SwitchPanel({
     }
     let cancelled = false
     const requestType: ContentType = contentType
-    const requestKey = contentRequestKey(normalized, requestType, sortBy, archivedFilter)
+    const requestKey = contentRequestKey(normalized, requestType, sortBy, archivedFilter, { from: dateFrom, to: dateTo })
     setContent(prev => ({ query: requestKey, status: 'loading', items: prev.query === requestKey ? prev.items : [] }))
     const timer = window.setTimeout(() => {
       callHost<HostContentHit>('content-search', {
@@ -421,6 +424,8 @@ function SwitchPanel({
         types: requestType === 'all' ? undefined : [requestType],
         sortBy,
         archived: archivedFilter,
+        from: dateFrom === '' ? undefined : dateFrom,
+        to: dateTo === '' ? undefined : dateTo,
       }).then((res) => {
         if (cancelled) return
         setContent({
@@ -435,7 +440,7 @@ function SwitchPanel({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [mode, normalized, contentType, sortBy, archivedFilter])
+  }, [mode, normalized, contentType, sortBy, archivedFilter, dateFrom, dateTo])
 
   // Focus the input on open; reset mode on every open.
   useEffect(() => {
@@ -450,23 +455,41 @@ function SwitchPanel({
   }, [onClose])
 
   // Title-mode rows: local substring filter over the corpus + domain chip.
+  // 标题模式的日期过滤走本地（语料行自带 updatedAt;结束日含当天）。
+  const dateRangeMs = useMemo<{ from?: number; to?: number }>(() => {
+    const parse = (value: string, nextDay: boolean): number | undefined => {
+      if (value === '') return undefined
+      const [year, month, day] = value.split('-').map(Number)
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return undefined
+      const date = new Date(year, month - 1, day)
+      if (nextDay) date.setDate(date.getDate() + 1)
+      return date.getTime()
+    }
+    const from = parse(dateFrom, false)
+    const to = parse(dateTo, true)
+    return { ...(from === undefined ? {} : { from }), ...(to === undefined ? {} : { to }) }
+  }, [dateFrom, dateTo])
+
   const titleRows = useMemo<HostSessionItem[]>(() => {
     if (sessions === null) return []
     const byDomain = sessions.filter(item =>
       archivedFilter === 'active' ? item.archived !== true
       : archivedFilter === 'archived' ? item.archived === true
       : true)
-    if (normalized === '') return byDomain
+    const byDate = byDomain.filter(item =>
+      (dateRangeMs.from === undefined || item.updatedAt >= dateRangeMs.from)
+      && (dateRangeMs.to === undefined || item.updatedAt < dateRangeMs.to))
+    if (normalized === '') return byDate
     return byDomain.filter(item =>
       item.title.toLowerCase().includes(normalized)
       || item.cwd.toLowerCase().includes(normalized))
-  }, [sessions, normalized, archivedFilter])
+  }, [sessions, normalized, archivedFilter, dateRangeMs])
 
   const children: ReactElement[] = []
   if (sessionsError !== null) {
     children.push(createElement('div', { key: 'err', className: 'dsws_error' }, translate(t, 'panel.sessionsError', { error: sessionsError })))
   }
-  const activeRequestKey = contentRequestKey(normalized, contentType, sortBy, archivedFilter)
+  const activeRequestKey = contentRequestKey(normalized, contentType, sortBy, archivedFilter, { from: dateFrom, to: dateTo })
   const activeContent = content.query === activeRequestKey ? content : { query: activeRequestKey, status: 'loading' as const, items: [] }
   if (mode === 'title') {
     if (sessions === null) {
@@ -591,6 +614,17 @@ function SwitchPanel({
           'aria-pressed': archivedFilter === chip.id,
           onClick: () => { setArchivedFilter(chip.id) },
         }, translate(t, chip.labelKey))),
+        // 日期范围（R6）:两个 date 输入,标题/内容共用;空 = 不限。
+        createElement('input', {
+          key: 'from', type: 'date', className: 'dsws_search', style: { flex: 'none', width: '128px', height: '24px', padding: '0 6px', fontSize: '12px' },
+          value: dateFrom, title: translate(t, 'date.from'),
+          onChange: (e: { target: { value: string } }) => { setDateFrom(e.target.value) },
+        }),
+        createElement('input', {
+          key: 'to', type: 'date', className: 'dsws_search', style: { flex: 'none', width: '128px', height: '24px', padding: '0 6px', fontSize: '12px' },
+          value: dateTo, title: translate(t, 'date.to'),
+          onChange: (e: { target: { value: string } }) => { setDateTo(e.target.value) },
+        }),
         // 类型筛选与排序只属于内容模式。
         ...(mode === 'content' ? CONTENT_TYPE_CHIPS.map(chip => createElement('button', {
           key: chip.id,
