@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.5.0-beta.11",
+  "version": "0.5.0-beta.12",
   "publishConfig": {
     "tag": "dsh-0.1.7"
   },
@@ -53,10 +53,11 @@
   },
   "scripts": {
     "build": "node -e \"require('fs').rmSync('lib',{recursive:true,force:true})\" && tsc -b && tsdown",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && node scripts/check-release.mjs",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:client": "node tests/client-store.test.mjs && node tests/client-panel-key.test.mjs && node tests/client-styles.test.mjs && node --import tsx tests/client-platform.test.mjs && node --import tsx tests/client-host-api.test.mjs && node --import tsx tests/client-locales.test.mjs && node --import tsx tests/client-open-session.test.mjs"
+    "test:client": "node tests/client-store.test.mjs && node tests/client-panel-key.test.mjs && node tests/client-styles.test.mjs && node --import tsx tests/client-platform.test.mjs && node --import tsx tests/client-host-api.test.mjs && node --import tsx tests/client-locales.test.mjs && node --import tsx tests/client-open-session.test.mjs",
+    "test:release": "node scripts/check-release.mjs"
   },
   "files": [
     "CHANGELOG.ja.md",
