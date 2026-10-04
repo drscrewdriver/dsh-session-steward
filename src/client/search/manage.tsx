@@ -63,6 +63,8 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
   const [workspaceFilter, setWorkspaceFilter] = useState('')
   const [textFilter, setTextFilter] = useState('')
   const [showAllWorkspaces, setShowAllWorkspaces] = useState(false)
+  // 分组收拢:勾选的组键(cwd);定位 chip 选中时该组自动展开。
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(new Set())
 
   // 收藏集合:挂载取一次。
   useEffect(() => {
@@ -147,6 +149,30 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
     if (needle === '') return true
     return item.title.toLowerCase().includes(needle) || item.cwd.toLowerCase().includes(needle)
   }
+
+  const toggleCollapsed = (key: string): void => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const setAllCollapsed = (collapsed: boolean): void => {
+    setCollapsedGroups(collapsed ? new Set(manageGroups.map(group => group.cwd)) : new Set())
+  }
+
+  // 定位 chip 选中某 workspace 时自动展开该组。
+  useEffect(() => {
+    if (workspaceFilter === '') return
+    setCollapsedGroups(prev => {
+      if (!prev.has(workspaceFilter)) return prev
+      const next = new Set(prev)
+      next.delete(workspaceFilter)
+      return next
+    })
+  }, [workspaceFilter])
 
   /** 批量动作;删除两步确认。 */
   const runBatch = (kind: 'archive' | 'unarchive' | 'purge'): void => {
@@ -248,6 +274,15 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
         key: 'less', type: 'button', className: 'dsws_chip',
         onClick: () => { setShowAllWorkspaces(false) },
       }, translate(t, 'workspace.less')),
+      createElement('span', { key: 'gap', style: { flex: 1 } }),
+      manageGroups.length > 1 && createElement('button', {
+        key: 'collapseAll', type: 'button', className: 'dsws_chip',
+        onClick: () => { setAllCollapsed(true) },
+      }, translate(t, 'group.collapseAll')),
+      manageGroups.length > 1 && createElement('button', {
+        key: 'expandAll', type: 'button', className: 'dsws_chip',
+        onClick: () => { setAllCollapsed(false) },
+      }, translate(t, 'group.expandAll')),
     ]),
     createElement('div', { key: 'chips', className: 'dsws_chips', role: 'group', 'aria-label': translate(t, 'domain.all') }, [
       ...(['all', 'active', 'archived'] as const).map(id => createElement('button', {
@@ -274,20 +309,22 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
         createElement('div', {
           key: 'head',
           className: 'dsws_groupHead',
-          title: translate(t, 'manage.selectGroup'),
-          onClick: () => { toggleGroup(group.items) },
+          title: translate(t, 'group.collapse'),
+          onClick: () => { toggleCollapsed(group.cwd) },
         }, [
+          createElement('span', { key: 'chev', style: { flex: 'none', fontSize: '10px', color: 'var(--dsw-alias-label-caption)', transition: 'transform .15s', transform: collapsedGroups.has(group.cwd) ? 'rotate(0deg)' : 'rotate(90deg)' } }, '▶'),
           createElement('span', { key: 'check', className: 'dsws_check' },
             createElement('input', {
               type: 'checkbox',
               checked: group.items.length > 0 && group.items.every(item => selected.has(item.sessionId)),
               onChange: () => { toggleGroup(group.items) },
               onClick: (e: { stopPropagation: () => void }) => { e.stopPropagation() },
+              title: translate(t, 'manage.selectGroup'),
             })),
           createElement('span', { key: 'title', className: 'dsws_groupTitle' }, group.cwd === '' ? translate(t, 'manage.group.nocwd') : group.cwd),
           createElement('span', { key: 'count', className: 'dsws_groupCount' }, `${group.items.filter(item => matchesText(item)).length}/${group.items.length}`),
         ]),
-        ...group.items.filter(item => matchesText(item)).map(item => createElement('button', {
+        ...(collapsedGroups.has(group.cwd) ? [] : group.items.filter(item => matchesText(item)).map(item => createElement('button', {
           key: item.sessionId,
           type: 'button',
           className: 'dsws_row',
@@ -314,7 +351,7 @@ export function ManageConsole({ t, open }: { t?: ManageTranslate; open: (session
             createElement('span', { key: 'tag', className: 'dsws_tag' }, fmtTime(item.updatedAt)),
           ]),
           createElement('span', { key: 'meta', className: 'dsws_meta' }, item.cwd),
-        ])),
+        ]))),
       ])),
     ),
   ]

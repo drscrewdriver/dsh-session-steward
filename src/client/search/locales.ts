@@ -115,6 +115,9 @@ export const zh = {
   'workspace.more': '还有 {n} 个',
   'workspace.less': '收起',
   'manage.search': '搜索会话…',
+  'group.collapse': '收拢/展开本组',
+  'group.expandAll': '全部展开',
+  'group.collapseAll': '全部收拢',
 } as const
 
 export type LocaleKey = keyof typeof zh
@@ -227,6 +230,9 @@ export const en: Dict = {
   'workspace.more': '{n} more',
   'workspace.less': 'Collapse',
   'manage.search': 'Search sessions…',
+  'group.collapse': 'Collapse/expand group',
+  'group.expandAll': 'Expand all',
+  'group.collapseAll': 'Collapse all',
 }
 
 /** Japanese dictionary. */
