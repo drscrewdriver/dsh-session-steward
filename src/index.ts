@@ -38,7 +38,7 @@ import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
 import { decodeSessionLogFile } from './host/health/decode.ts'
 import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
-import { countCorpus, findSession, scanSessions } from './host/health/scan.ts'
+import { countCorpus, findSession, findSessionLog, scanSessions } from './host/health/scan.ts'
 import { gateSourceKind, migrateSessionSourceKind, readSourceKindFacts } from './host/health/source-kind.ts'
 import { SwitchIndexEngine, type SwitchIndexContentType, type SwitchSearchSort } from './host/index/engine.ts'
 import { SwitchWatermarkSync, type SwitchSyncState } from './host/index/sync.ts'
@@ -58,7 +58,7 @@ import {
   type SwitchRebuildState,
 } from './host/index/rebuild.ts'
 import { exportSnapshot, parseSnapshot } from './host/index/snapshot.ts'
-import type { SwitchRawEvent } from './host/index/extract.ts'
+import { extractTitleFromEvents, type SwitchRawEvent } from './host/index/extract.ts'
 
 export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG } from './config.ts'
 export type { StewardConfig, SwitchSearchConfig } from './config.ts'
@@ -94,6 +94,7 @@ export type { HealthCacheEntry } from './host/health/cache.ts'
 export { assessRepair } from './host/health/repair.ts'
 export type { RepairAssessment, RepairVerdict } from './host/health/repair.ts'
 export { SwitchIndexEngine } from './host/index/engine.ts'
+export { extractTitleFromEvents } from './host/index/extract.ts'
 export { SwitchWatermarkSync } from './host/index/sync.ts'
 export { rebuildIndex, importIntoIndex, recoverIndex, DEFAULT_INDEX_LAYOUT } from './host/index/rebuild.ts'
 export { exportSnapshot, parseSnapshot } from './host/index/snapshot.ts'
@@ -562,6 +563,7 @@ async function indexRebuild(srt: SearchRuntime): Promise<{ ok: boolean; started?
     {
       log: srt.log,
       onState: (live) => { index.rebuild = live },
+      readSessionFromFile: srt.readSessionFromFile,
     },
   ).then((state) => {
     index.rebuild = state
@@ -670,6 +672,11 @@ export interface SearchRuntime {
   registry: () => { archivedSessionIds: readonly string[] }
   /** Cordis logger bridge ([session-steward] prefixed). */
   log: (msg: string) => void
+  /** 文件级兜底读取器（重建钩子透传;见 SwitchWatermarkSync 注释）。 */
+  readSessionFromFile: (sessionId: string) => Promise<{
+    session: { id: string; version: number; createdAt?: number; cwd?: string }
+    events: readonly SwitchRawEvent[]
+  } | undefined>
 }
 
 /** JSON 面的搜索子域方法分发（index-export/import 走原始体，在路由层特判）。 */
@@ -1002,6 +1009,32 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
     dir: resolveIndexDir(initial.indexDir || process.env[INDEX_DIR_ENV]),
   }
   const engine = new SwitchIndexEngine({ path: `${indexLayout.dir}/${indexLayout.active}` })
+  // 文件级兜底读取器：health 侧的多帧 zstd 读取器直接读转录文件,映射成
+  // SwitchRawEvent 流（version 置 0 —— 语料头版本由调用方钉,不依赖文件）。
+  const readSessionFromFile = async (sessionId: string): Promise<{
+    session: { id: string; version: number; createdAt?: number; cwd?: string }
+    events: readonly SwitchRawEvent[]
+  } | undefined> => {
+    try {
+      const logPath = findSessionLog(sessionId, resolvedHome)
+      if (logPath === undefined) return undefined
+      const decoded = decodeSessionLogFile(logPath)
+      return {
+        session: { id: sessionId, version: 0 },
+        events: decoded.events.map(event => ({
+          seq: event.seq,
+          type: event.type,
+          time: event.time,
+          surfaceOp: event.surfaceOp,
+          data: event.data,
+        })),
+      }
+    } catch (err) {
+      log(`file fallback read failed for ${sessionId}: ${String(err instanceof Error ? err.message : err)}`)
+      return undefined
+    }
+  }
+
   const indexState: SwitchIndexServiceState = {
     engine,
     archiveReader,
@@ -1014,7 +1047,7 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
       readTitleSnapshots: sessionQuery === undefined
         ? undefined
         : (ids) => sessionQuery.readTitleSnapshots(ids),
-    }, () => ({ archivedSessionIds: archiveReader.read().ids }), log),
+    }, () => ({ archivedSessionIds: archiveReader.read().ids }), log, readSessionFromFile),
     layout: indexLayout,
     rebuild: { state: 'idle', done: 0, total: 0, startedAt: 0, finishedAt: 0, failures: [] },
   }
@@ -1024,6 +1057,7 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
     config: () => current(),
     registry: () => ({ archivedSessionIds: archiveReader.read().ids }),
     log,
+    readSessionFromFile,
   }
 
   const initialConfig = current()

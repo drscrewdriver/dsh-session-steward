@@ -18,6 +18,30 @@ export interface SwitchRawEvent {
   data: unknown
 }
 
+/**
+ * 从会话事件流里抽出**最后一帧标题**（`session/title` log-only 事件）。
+ *
+ * 这是标题的基础层：入索引时随事件白拿，不依赖 readTitleSnapshots（后者
+ * 对归档 id 可能整批失败——beta.4 标题全军覆没的根因）。数据形状按历史
+ * 演变兼容三种：`{ title: string }`、`{ title: { title } }`、`{ title: { val } }`。
+ */
+export function extractTitleFromEvents(events: readonly SwitchRawEvent[]): string {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (event === null || typeof event !== 'object') continue
+    if (event.type !== 'session/title') continue
+    const data = event.data as { title?: unknown } | undefined
+    const title = data?.title
+    if (typeof title === 'string' && title.trim() !== '') return title
+    if (title !== null && typeof title === 'object') {
+      const inner = title as { title?: unknown; val?: unknown }
+      if (typeof inner.title === 'string' && inner.title.trim() !== '') return inner.title
+      if (typeof inner.val === 'string' && inner.val.trim() !== '') return inner.val
+    }
+  }
+  return ''
+}
+
 /** Surface membership of one indexed document. */
 export type SwitchSurface = 'current' | 'shadowed'
 

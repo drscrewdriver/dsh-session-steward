@@ -948,6 +948,14 @@ interface SwitchRawEvent {
   surfaceOp?: unknown;
   data: unknown;
 }
+/**
+ * 从会话事件流里抽出**最后一帧标题**（`session/title` log-only 事件）。
+ *
+ * 这是标题的基础层：入索引时随事件白拿，不依赖 readTitleSnapshots（后者
+ * 对归档 id 可能整批失败——beta.4 标题全军覆没的根因）。数据形状按历史
+ * 演变兼容三种：`{ title: string }`、`{ title: { title } }`、`{ title: { val } }`。
+ */
+declare function extractTitleFromEvents(events: readonly SwitchRawEvent[]): string;
 //#endregion
 //#region src/host/index/engine.d.ts
 /** One indexed session header row. */
@@ -1196,9 +1204,28 @@ declare class SwitchWatermarkSync {
   private readonly sessionQuery;
   private readonly readArchiveSource?;
   private readonly log?;
+  private readonly readSessionFromFile?;
   private running;
   private readonly state;
-  constructor(engine: SwitchIndexEngine, sessionQuery: SwitchSyncSessionQuery, readArchiveSource?: (() => SwitchArchiveSource | undefined) | undefined, log?: ((msg: string) => void) | undefined);
+  /**
+   * @param readSessionFromFile - 可选的**文件级兜底读取器**（管家 health 侧的
+   * 多帧 zstd 读取器）：sessionQuery.readSession 对某些会话（典型:归档会话,
+   * 或服务面退化）失败时改读转录文件。返回 undefined 表示文件也不可用。
+   */
+  constructor(engine: SwitchIndexEngine, sessionQuery: SwitchSyncSessionQuery, readArchiveSource?: (() => SwitchArchiveSource | undefined) | undefined, log?: ((msg: string) => void) | undefined, readSessionFromFile?: ((sessionId: string) => Promise<{
+    session: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+    events: readonly SwitchRawEvent[];
+  } | undefined>) | undefined);
+  /**
+   * 读取一个会话的日志:服务面优先,失败落文件兜底。两条路都失败时抛最后
+   * 一个错误,由调用方按会话隔离记失败。
+   */
+  private readSessionLog;
   /** Current progress snapshot (cloned). */
   snapshot(): SwitchSyncState;
   /**
@@ -1218,7 +1245,14 @@ declare class SwitchWatermarkSync {
    */
   poll(): Promise<SwitchSyncState>;
   private runPass;
-  /** Fold latest titles for changed sessions into the index header rows. */
+  /**
+   * Fold latest titles for changed sessions into the index header rows.
+   *
+   * beta.4 教训:整批一次调用,任何一个坏 id（典型:归档 id）让整个 promise
+   * reject,catch 一吞就是**全部**标题丢失。改为分块 + 块失败时逐 id 重试 ——
+   * 单点坏 id 最多损失它自己的精修标题（入索引时的 extractTitleFromEvents
+   * 基础层仍然在）。
+   */
   private backfillTitles;
 }
 //#endregion
@@ -1326,6 +1360,19 @@ interface SwitchRebuildHooks {
   /** State-mutation sink: called after every change so index-status sees
    * live progress (the "0/?" bug was state cloned only at completion). */
   onState?: (state: SwitchRebuildState) => void;
+  /**
+   * 文件级兜底读取器（与同步器同语义）：readSession 对归档/服务面退化会话
+   * 失败时改读转录文件；返回 undefined 表示文件也不可用（记失败）。
+   */
+  readSessionFromFile?: (sessionId: string) => Promise<{
+    session: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+    events: readonly SwitchRawEvent[];
+  } | undefined>;
 }
 declare function rebuildIndex(activeEngine: SwitchIndexEngine, layout: SwitchIndexLayout, sessionQuery: SwitchRebuildSessionQuery, keepArchives: number, onProgress?: (done: number, total: number) => void, archiveSource?: () => SwitchArchiveSource | undefined, hooks?: SwitchRebuildHooks): Promise<SwitchRebuildState>;
 /** One doc-level record the snapshot importer feeds in. */
@@ -2015,6 +2062,16 @@ interface SearchRuntime {
   };
   /** Cordis logger bridge ([session-steward] prefixed). */
   log: (msg: string) => void;
+  /** 文件级兜底读取器（重建钩子透传;见 SwitchWatermarkSync 注释）。 */
+  readSessionFromFile: (sessionId: string) => Promise<{
+    session: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+    events: readonly SwitchRawEvent[];
+  } | undefined>;
 }
 /** JSON 面的搜索子域方法分发（index-export/import 走原始体，在路由层特判）。 */
 declare function handleIndexMethod(method: string, payload: unknown, srt: SearchRuntime): Promise<unknown>;
@@ -2032,4 +2089,4 @@ declare function handleMethod(method: string, payload: unknown, runtime: Steward
  */
 declare function apply(ctx: Context, config?: Partial<StewardConfig & SwitchSearchConfig>): void;
 //#endregion
-export { Config, DEFAULT_CONFIG, DEFAULT_INDEX_LAYOUT, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, INDEX_METHODS, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG, SearchRuntime, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, type SwitchArchiveDiagnostics, SwitchIndexEngine, SwitchIndexServiceState, type SwitchSearchConfig, SwitchWatermarkSync, V4_HOST_MIN, apply, archiveArchiveFile, archiveHistory, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createArchiveSource, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, detectSteward, dirSize, discoverSessions, editWorkspaceDocument, exportSnapshot, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleIndexMethod, handleMethod, importIntoIndex, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, parseSnapshot, prescribe, probePeer, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, rebuildIndex, recoverIndex, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
+export { Config, DEFAULT_CONFIG, DEFAULT_INDEX_LAYOUT, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, INDEX_METHODS, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG, SearchRuntime, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, type SwitchArchiveDiagnostics, SwitchIndexEngine, SwitchIndexServiceState, type SwitchSearchConfig, SwitchWatermarkSync, V4_HOST_MIN, apply, archiveArchiveFile, archiveHistory, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createArchiveSource, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, detectSteward, dirSize, discoverSessions, editWorkspaceDocument, exportSnapshot, extractTitleFromEvents, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleIndexMethod, handleMethod, importIntoIndex, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, parseSnapshot, prescribe, probePeer, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, rebuildIndex, recoverIndex, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };

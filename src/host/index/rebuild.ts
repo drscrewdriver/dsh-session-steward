@@ -128,6 +128,14 @@ export interface SwitchRebuildHooks {
   /** State-mutation sink: called after every change so index-status sees
    * live progress (the "0/?" bug was state cloned only at completion). */
   onState?: (state: SwitchRebuildState) => void
+  /**
+   * 文件级兜底读取器（与同步器同语义）：readSession 对归档/服务面退化会话
+   * 失败时改读转录文件；返回 undefined 表示文件也不可用（记失败）。
+   */
+  readSessionFromFile?: (sessionId: string) => Promise<{
+    session: { id: string; version: number; createdAt?: number; cwd?: string }
+    events: readonly SwitchRawEvent[]
+  } | undefined>
 }
 
 /** Sessions per batched transaction (one fsync checkpoint per chunk). */
@@ -180,7 +188,15 @@ export async function rebuildIndex(
       // replay-validate 不激活）；构建完成后按官方归档集合统一翻 flag。
       const archivedSet = new Set(archiveSource?.()?.archivedSessionIds ?? [])
       const readLog = async (header: { id: string; version: number; createdAt?: number; cwd?: string }) => {
-        const log = await sessionQuery.readSession(header.id)
+        let log: { session: { id: string; version: number; createdAt?: number; cwd?: string }; events: readonly SwitchRawEvent[] }
+        try {
+          log = await sessionQuery.readSession(header.id)
+        } catch (serviceError) {
+          if (hooks?.readSessionFromFile === undefined) throw serviceError
+          const fromFile = await hooks.readSessionFromFile(header.id)
+          if (fromFile === undefined) throw serviceError
+          log = fromFile
+        }
         return {
           sessionId: header.id,
           version: log.session.version,

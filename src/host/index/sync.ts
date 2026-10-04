@@ -7,7 +7,10 @@
  * reported; one broken log never stalls the whole sync.
  */
 import type { SwitchIndexEngine } from './engine.ts'
-import type { SwitchRawEvent } from './extract.ts'
+import { extractTitleFromEvents, type SwitchRawEvent } from './extract.ts'
+
+/** 标题折叠的分块大小（一次 readTitleSnapshots 的 id 数上限,防整批一坏全坏）。 */
+const TITLE_CHUNK = 50
 
 /** The sessionQuery faces the sync reads (structural mirrors). */
 export interface SwitchSyncSessionQuery {
@@ -63,13 +66,43 @@ export class SwitchWatermarkSync {
     failures: [],
   }
 
+  /**
+   * @param readSessionFromFile - 可选的**文件级兜底读取器**（管家 health 侧的
+   * 多帧 zstd 读取器）：sessionQuery.readSession 对某些会话（典型:归档会话,
+   * 或服务面退化）失败时改读转录文件。返回 undefined 表示文件也不可用。
+   */
   constructor(
     private readonly engine: SwitchIndexEngine,
     private readonly sessionQuery: SwitchSyncSessionQuery,
     private readonly readArchiveSource?: () => SwitchArchiveSource | undefined,
     private readonly log?: (msg: string) => void,
+    private readonly readSessionFromFile?: (sessionId: string) => Promise<{
+      session: { id: string; version: number; createdAt?: number; cwd?: string }
+      events: readonly SwitchRawEvent[]
+    } | undefined>,
   ) {
 
+  }
+
+  /**
+   * 读取一个会话的日志:服务面优先,失败落文件兜底。两条路都失败时抛最后
+   * 一个错误,由调用方按会话隔离记失败。
+   */
+  private async readSessionLog(header: { id: string; version: number; createdAt?: number; cwd?: string }): Promise<{
+    session: { id: string; version: number; createdAt?: number; cwd?: string }
+    events: readonly SwitchRawEvent[]
+  }> {
+    try {
+      return await this.sessionQuery.readSession(header.id)
+    } catch (serviceError) {
+      if (this.readSessionFromFile === undefined) throw serviceError
+      const fromFile = await this.readSessionFromFile(header.id)
+      if (fromFile !== undefined) {
+        this.log?.(`session ${header.id}: sessionQuery read failed, served from transcript file (${String(serviceError instanceof Error ? serviceError.message : serviceError)})`)
+        return fromFile
+      }
+      throw serviceError
+    }
   }
 
   /** Current progress snapshot (cloned). */
@@ -125,17 +158,43 @@ export class SwitchWatermarkSync {
         if (existing !== undefined && existing.version === header.version) continue
         changedIds.push(header.id)
         try {
-          const log = await this.sessionQuery.readSession(header.id)
+          const log = await this.readSessionLog(header)
           this.engine.upsertSession({
             sessionId: header.id,
-            version: log.session.version,
-            cwd: log.session.cwd ?? '',
-            updatedAt: log.session.createdAt ?? 0,
+            version: header.version,
+            cwd: log.session.cwd ?? header.cwd ?? '',
+            updatedAt: log.session.createdAt ?? header.createdAt ?? 0,
+            // 标题基础层:事件流白拿（归档 id 也能拿到）;快照折叠只做精修。
+            title: extractTitleFromEvents(log.events),
             events: log.events,
+            // 新行插入时带上归档标记（ON CONFLICT 不动旧行的 flag,翻转仍归
+            // setArchived）—— 免掉"插行要等下一轮 setArchived 才翻 flag"的单轮滞后。
+            archived: archivedSet.has(header.id),
           })
           updated += 1
         } catch (err) {
           failures.push({ sessionId: header.id, error: String(err instanceof Error ? err.message : err) })
+        }
+      }
+      // 归档覆盖:某些宿主线的 listSessions 可能不含归档会话 —— 归档集合里的
+      // id 若还没有索引行,这里显式补齐（readSession 对归档是 replay-validate,
+      // 失败时走文件兜底）。
+      for (const archivedId of archivedSet) {
+        if (this.engine.getSession(archivedId) !== undefined) continue
+        try {
+          const log = await this.readSessionLog({ id: archivedId, version: -1 })
+          this.engine.upsertSession({
+            sessionId: archivedId,
+            version: log.session.version,
+            cwd: log.session.cwd ?? '',
+            updatedAt: log.session.createdAt ?? 0,
+            title: extractTitleFromEvents(log.events),
+            events: log.events,
+            archived: true,
+          })
+          updated += 1
+        } catch (err) {
+          failures.push({ sessionId: archivedId, error: `archived: ${String(err instanceof Error ? err.message : err)}` })
         }
       }
       // Drop sessions that vanished from the corpus —— 但**归档集合里的行不删**：
@@ -163,22 +222,40 @@ export class SwitchWatermarkSync {
     return this.snapshot()
   }
 
-  /** Fold latest titles for changed sessions into the index header rows. */
+  /**
+   * Fold latest titles for changed sessions into the index header rows.
+   *
+   * beta.4 教训:整批一次调用,任何一个坏 id（典型:归档 id）让整个 promise
+   * reject,catch 一吞就是**全部**标题丢失。改为分块 + 块失败时逐 id 重试 ——
+   * 单点坏 id 最多损失它自己的精修标题（入索引时的 extractTitleFromEvents
+   * 基础层仍然在）。
+   */
   private async backfillTitles(sessionIds: readonly string[]): Promise<void> {
     const readTitles = this.sessionQuery.readTitleSnapshots
     if (readTitles === undefined || sessionIds.length === 0) return
-    try {
-      const observations = await readTitles([...new Set(sessionIds)])
-      for (const observation of observations) {
-        if (observation.status !== 'fulfilled' || observation.value === undefined) continue
-        const title = observation.value.title?.title
-        // 归档行的标题同样折叠（归档会话仍可改名,索引标题要跟上）。
-        if (typeof title === 'string' && title.trim().length > 0) {
-          this.engine.updateSessionHeader({ sessionId: observation.value.session.id, title })
+    const ids = [...new Set(sessionIds)]
+    const foldOne = (observation: { status: 'fulfilled' | 'rejected'; value?: { session: { id: string }; title?: { title: string } } }): void => {
+      if (observation.status !== 'fulfilled' || observation.value === undefined) return
+      const title = observation.value.title?.title
+      // 归档行的标题同样折叠（归档会话仍可改名,索引标题要跟上）。
+      if (typeof title === 'string' && title.trim().length > 0) {
+        this.engine.updateSessionHeader({ sessionId: observation.value.session.id, title })
+      }
+    }
+    for (let start = 0; start < ids.length; start += TITLE_CHUNK) {
+      const chunk = ids.slice(start, start + TITLE_CHUNK)
+      try {
+        const observations = await readTitles(chunk)
+        observations.forEach(foldOne)
+      } catch {
+        // 整块失败 → 逐 id 重试,坏 id 只损失自己。
+        for (const id of chunk) {
+          try {
+            const observations = await readTitles([id])
+            observations.forEach(foldOne)
+          } catch { /* 该 id 的精修标题放弃,基础层标题仍在 */ }
         }
       }
-    } catch {
-      // Title backfill is cosmetic; index rows keep their previous titles.
     }
   }
 }
