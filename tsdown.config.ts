@@ -14,16 +14,23 @@ const ID = 'dsh-session-steward'
 
 export default defineConfig([
   // 主机半身：src/index.ts 产出 lib/index.js（ESM / node）。
-  {
-    name: `${ID}/lib`,
-    entry: { index: 'src/index.ts', registry: 'src/host/registry/archive-registry.ts' },
+  // 宿主半拆成两个单入口构建:codeSplitting:false 时 rolldown 不允许多输入,
+  // 而多入口共享模块会拆出 chunk 文件 —— files 白名单与部分加载器对多文件
+  // 产物都更脆弱(beta.10 的 chunk 漏发事故)。各入口自包含,重复内联共享模块。
+  ...([
+    { libName: 'index', entryPath: 'src/index.ts', withDts: true },
+    { libName: 'registry', entryPath: 'src/host/registry/archive-registry.ts', withDts: false },
+  ]).map(spec => ({
+    name: `${ID}/lib/${spec.libName}`,
+    entry: { [spec.libName]: spec.entryPath },
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
     target: 'es2024',
+    outputOptions: { codeSplitting: false },
     // 产出 lib/index.js / lib/index.d.ts（非 .mjs/.d.mts），main/types 解析无需处理扩展名。
     fixedExtension: false,
-    dts: true,
+    dts: spec.withDts,
     clean: false,
     // 框架依赖由 dsh profile 树在运行时解析；@deepseek-ai/dsh-session 仅在可用时软加载。
     deps: {
@@ -40,7 +47,7 @@ export default defineConfig([
         'better-sqlite3',
       ],
     },
-  },
+  })),
   // 浏览器半身：src/client/index.ts 产出 lib/client.js（ModuleLoader 工厂）。
   {
     name: `${ID}/client`,
