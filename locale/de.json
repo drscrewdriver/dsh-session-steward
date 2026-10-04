@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sitzungs-Verwalter",
+    "description": "Sitzungsverlaufsdateien (Archivansicht und Bereinigung) und Sitzungs-Health-Check (Untersuchung → Rezept → Entlassung); keine Eingriffe in Sitzungsprotokolle, nur umkehrbare Vorgänge."
+  }
+}

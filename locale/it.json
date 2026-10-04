@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Amministratore di sessione",
+    "description": "File della cronologia delle sessioni (consultazione e pulizia degli archivi) e controllo di salute delle sessioni (visita → prescrizione → dimissione); non tocca i log di sessione, solo operazioni reversibili."
+  }
+}

@@ -32,6 +32,9 @@ export default defineConfig([
         '@deepseek-ai/cordis',
         '@deepseek-ai/schemastery',
         '@deepseek-ai/dsh-session',
+        // 可选加速驱动（optionalDependencies）：缺失时引擎回退 node:sqlite，
+        // 打包器绝不能尝试解析它。
+        'better-sqlite3',
       ],
     },
   },

@@ -294,7 +294,7 @@ declare class Fiber {
 //#endregion
 //#region node_modules/cordis/lib/events.d.ts
 type Parameters<F> = F extends ((...args: infer P) => any) ? P : never;
-type ReturnType<F> = F extends ((...args: any) => infer R) ? R : never;
+type ReturnType$1<F> = F extends ((...args: any) => infer R) ? R : never;
 type ThisType<F> = F extends ((this: infer T, ...args: any) => any) ? T : never;
 type DispatchMode = 'emit' | 'parallel' | 'serial' | 'bail' | 'waterfall';
 declare module './context' {
@@ -303,12 +303,12 @@ declare module './context' {
     parallel<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): Promise<void>;
     emit<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): void;
     emit<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): void;
-    serial<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType<Events[K]>>;
-    serial<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType<Events[K]>>;
-    bail<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>;
-    bail<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>;
-    waterfall<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>;
-    waterfall<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>;
+    serial<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType$1<Events[K]>>;
+    serial<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType$1<Events[K]>>;
+    bail<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): ReturnType$1<Events[K]>;
+    bail<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): ReturnType$1<Events[K]>;
+    waterfall<K extends keyof Events>(name: K, ...args: Parameters<Events[K]>): ReturnType$1<Events[K]>;
+    waterfall<K extends keyof Events>(thisArg: NoInfer<ThisType<Events[K]>>, name: K, ...args: Parameters<Events[K]>): ReturnType$1<Events[K]>;
     on<K extends keyof Events>(name: K, listener: Events[K], options?: boolean | EventOptions): () => boolean;
     once<K extends keyof Events>(name: K, listener: Events[K], options?: boolean | EventOptions): () => boolean;
   }
@@ -460,27 +460,59 @@ declare abstract class Service<out T = never> {
 //#endregion
 //#region src/config.d.ts
 /**
- * dsh-session-steward 的共享配置面。
+ * dsh-session-steward 的共享配置面（合并包：管家子域 + 搜索索引子域）。
  *
  * 与 host 半身（schemastery schema 在 src/index.ts）以及浏览器半身共用同一形状，
- * 使一处 admitted 的值在另一处也 admitted —— 与 dsh-session-search-toggle /
- * dsh-thinking-levels 的 config 面惯例一致。
+ * 使一处 admitted 的值在另一处也 admitted。
+ *
+ * 两个设置命名空间**并存且互不迁移**：
+ * - `session-steward` —— 管家子域（enabled/historyFiles/healthCheck/search 等共享键）；
+ * - `switch-search` —— 搜索子域的历史命名空间，存储键承诺保持稳定（见
+ *   dsh-search-index README「存储键保持稳定，不做迁移」）；0.1.7 起两者实际
+ *   都落在同一 composition entry（configForms），旧宿主才按命名空间分流。
  */
 /** 会话管家运行时配置（设置命名空间 + 组合入口）。 */
 interface StewardConfig {
-  /** 插件总开关。 */
+  /** 插件总开关（合并包唯一 master：关闭后不注册任何子域路由）。 */
   enabled: boolean;
   /** 会话历史文件（归档浏览与清理）。关闭后不注册 history 路由、不渲染「养老院」页签。 */
   historyFiles?: boolean;
   /** 会话健康检查（体检 → 处方 → 出院）。关闭后不注册 health 路由、不渲染「体检」页签。 */
   healthCheck?: boolean;
+  /** 搜索索引子域（`index-*` 路由与侧栏搜索入口）。关闭后索引子域整体停摆。 */
+  search?: boolean;
 }
 /** 缺省值。 */
 declare const DEFAULT_CONFIG: Required<StewardConfig>;
 /** host 半身注册的设置命名空间（与 src/index.ts 保持一致）。 */
 declare const STEWARD_SETTINGS_NAMESPACE = "session-steward";
-/** host 路由前缀（与搜索索引插件的 /switch-search/api 互不干扰）。 */
+/** host 路由前缀（管家子域；与搜索子域的 /switch-search/api 互不干扰）。 */
 declare const STEWARD_API_PREFIX = "/session-steward/api";
+/** 搜索子域路由前缀（历史值，浏览器旧 bundle 与快照文件名依赖它，保持不变）。 */
+declare const SWITCH_API_PREFIX = "/switch-search/api";
+/** 搜索面板打开时的默认模式。 */
+type SwitchSearchDefaultMode = 'title' | 'content';
+/** 搜索子域可调配置（独立于 StewardConfig 的历史形状，字段名保持稳定）。 */
+interface SwitchSearchConfig {
+  /**
+   * 搜索卡上的「启用」开关。合并包里它与管家 `enabled` 是**同一个**组合入口
+   * 字段（0.1.7 configForms 单 scope）；保留在此处是为了 legacy settingsScope
+   * 回退路径（旧 switch-search 命名空间的存储形状）与设置卡类型不变。
+   */
+  enabled?: boolean;
+  /** 面板默认模式。 */
+  defaultMode: SwitchSearchDefaultMode;
+  /** 独立索引是否后台自动同步（水位轮询）。 */
+  autoSync?: boolean;
+  /** 增量同步间隔（ms）。 */
+  syncIntervalMs?: number;
+  /** 整理索引后保留的归档份数。 */
+  archiveKeep?: number;
+  /** 独立索引文件的可选绝对目录。 */
+  indexDir?: string;
+}
+/** 搜索子域缺省值。 */
+declare const SWITCH_DEFAULT_CONFIG: Required<SwitchSearchConfig>;
 //#endregion
 //#region src/host/history/archive-source.d.ts
 /** 一次归档读取的结果：ids 以及服务它的来源。 */
@@ -872,6 +904,413 @@ declare class HealthCache {
   /** 丢弃缓存与未完成的累积。 */
   clear(): void;
 }
+//#endregion
+//#region src/host/index/schema.d.ts
+/**
+ * Which SQLite driver served the handle (better-sqlite3 when the optional
+ * dependency installed, node:sqlite otherwise). Surfaced in logs and
+ * index-status so rebuild speed can be compared across drivers.
+ */
+type SwitchSqliteDriver = 'better-sqlite3' | 'node:sqlite';
+//#endregion
+//#region src/host/index/extract.d.ts
+/**
+ * First-party semantic text extraction for the independent switch-search index.
+ *
+ * Semantics mirror the official session-query `extractSessionEventText` and the
+ * core-session surface fold, mirrored structurally: the plugin must not
+ * value-import official packages, so the event data is inspected as plain
+ * records. Structural boundaries, embedded raw streams, request envelopes, and
+ * unknown declaration-merged events contribute no text.
+ */
+/** One raw session event the plugin reads through sessionQuery.readSession. */
+interface SwitchRawEvent {
+  seq: number;
+  type: string;
+  time?: number;
+  ignorable?: boolean;
+  surfaceOp?: unknown;
+  data: unknown;
+}
+//#endregion
+//#region src/host/index/engine.d.ts
+/** One indexed session header row. */
+interface SwitchIndexedSession {
+  sessionId: string;
+  version: number;
+  title: string;
+  cwd: string;
+  updatedAt: number;
+  indexedAt: number;
+  archived: boolean;
+}
+/** One session-grouped search hit. */
+interface SwitchSearchHit {
+  sessionId: string;
+  title: string;
+  seq: number;
+  type: string;
+  /** Timestamp of the strongest matching document. Per-hit, not per-session. */
+  time: number;
+  /**
+   * Session-level last-activity timestamp. Distinct from `time`: a session
+   * may hold an old best match yet have moved one minute ago. This is the
+   * field recency ordering and any client-side re-sort must key on.
+   */
+  updatedAt: number;
+  snippet: string;
+}
+/**
+ * Result ordering for one search.
+ * - `relevance` (default) — weighted BM25, the historical behaviour.
+ * - `time` — session recency first, relevance as the tie-break.
+ */
+type SwitchSearchSort = 'relevance' | 'time';
+/** Coarse type-filter buckets mapped onto raw session event types. */
+type SwitchIndexContentType = 'all' | 'user' | 'reply' | 'tool';
+/** Constructor options for one engine instance. */
+interface SwitchIndexEngineOptions {
+  /** Absolute path of the index file this engine owns. */
+  path: string;
+}
+/** One open index handle. All mutating calls are synchronous; callers pace
+ * them off the HTTP hot path (background sync / rebuild tasks). */
+declare class SwitchIndexEngine {
+  private readonly options;
+  private db;
+  private driver;
+  private inBatch;
+  constructor(options: SwitchIndexEngineOptions);
+  /** Which SQLite driver is serving this handle. */
+  get driverLabel(): SwitchSqliteDriver;
+  /**
+   * Run one write inside the current batched transaction, or its own
+   * IMMEDIATE transaction when not batching (nested calls join the batch).
+   */
+  withWriteTx<T>(fn: () => T): T;
+  /**
+   * Run one function as a single batched transaction (one fsync checkpoint):
+   * upserts inside it join via withWriteTx instead of opening their own.
+   */
+  runBatched<T>(fn: () => T): T;
+  /** Whether the handle is open. */
+  get isOpen(): boolean;
+  /** Open (creating or migrating) the index file. Idempotent. */
+  open(): Promise<void>;
+  /** Close the handle. Idempotent. */
+  close(): void;
+  /** Remove one session's FTS entries for external-content bookkeeping. */
+  private deleteSessionFts;
+  /** Insert or replace one session's documents and header row. */
+  upsertSession(input: {
+    sessionId: string;
+    version: number;
+    title?: string;
+    cwd?: string;
+    updatedAt?: number;
+    events: readonly SwitchRawEvent[];
+  }): void;
+  /**
+   * Write an archived session's header row without any document content:
+   * the official archive never removes logs, and the index mirrors that with
+   * a flag while skipping the content copy on rebuilds.
+   */
+  upsertArchivedHeader(input: {
+    sessionId: string;
+    version: number;
+    title?: string;
+    cwd?: string;
+    updatedAt?: number;
+  }): void;
+  /**
+   * Apply the official archive set: mark archived ids, unmark the rest.
+   * Clearing the flag forces the next watermark pass to re-ingest the
+   * session's full content (version = -1).
+   */
+  setArchived(archivedIds: ReadonlySet<string>): void;
+  /** One session's stored documents, ascending seq (snapshot export face). */
+  exportSessionDocs(sessionId: string): {
+    seq: number;
+    type: string;
+    surface: string;
+    time: number;
+    text: string;
+  }[];
+  /**
+   * Insert or replace one session from already-extracted documents
+   * (snapshot import face; no re-extraction, what was exported is restored;
+   * segmentation is recomputed for the current index format).
+   */
+  importSessionDocs(input: {
+    sessionId: string;
+    version: number;
+    title?: string;
+    docs: readonly {
+      seq: number;
+      type: string;
+      surface: string;
+      time: number;
+      text: string;
+    }[];
+  }): void;
+  /** Remove one session and its documents entirely. */
+  removeSession(sessionId: string): void;
+  /** Update only a session's header row (title backfill), keeping documents. */
+  updateSessionHeader(input: {
+    sessionId: string;
+    title?: string;
+    cwd?: string;
+    updatedAt?: number;
+  }): void;
+  /** One indexed session row, or undefined. */
+  getSession(sessionId: string): SwitchIndexedSession | undefined;
+  /** Active (non-archived) indexed sessions, newest first. */
+  listIndexedSessions(): SwitchIndexedSession[];
+  /** Archived (soft-deleted) sessions, newest first — the archive viewer face. */
+  listArchived(): SwitchIndexedSession[];
+  /** Number of active (non-archived) indexed sessions. */
+  countSessions(): number;
+  /** Number of archived (soft-deleted) sessions. */
+  countArchived(): number;
+  /**
+   * Run one session-grouped full-text search.
+   *
+   * One statement: the FTS match is bounded by rank in a subquery (its rowid
+   * aligns with docs.doc_id), then the type/surface filters join in — no
+   * second round-trip, no large IN parameter lists.
+   * @param request - query text, coarse type filter, page size, ordering.
+   * @returns hits ordered by `sortBy` (relevance by default).
+   */
+  search(request: {
+    query: string;
+    types?: readonly SwitchIndexContentType[];
+    limit?: number;
+    sortBy?: SwitchSearchSort;
+  }): SwitchSearchHit[];
+  private requireDb;
+}
+//#endregion
+//#region src/host/index/sync.d.ts
+/** The sessionQuery faces the sync reads (structural mirrors). */
+interface SwitchSyncSessionQuery {
+  listSessions(): Promise<readonly {
+    header: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+  }[]>;
+  readSession(sessionId: string): Promise<{
+    session: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+    events: readonly SwitchRawEvent[];
+  }>;
+  readTitleSnapshots?(sessionIds: readonly string[]): Promise<readonly {
+    status: 'fulfilled' | 'rejected';
+    value?: {
+      session: {
+        id: string;
+      };
+      title?: {
+        title: string;
+      };
+    };
+  }[]>;
+}
+/** Live sync progress reported to the status endpoint. */
+interface SwitchSyncState {
+  /** What the syncer is doing right now. */
+  state: 'idle' | 'syncing' | 'error';
+  /** Epoch ms of the last completed pass. */
+  lastSyncAt: number;
+  /** Sessions currently in the index. */
+  indexed: number;
+  /** Sessions seen in the corpus at the last pass. */
+  total: number;
+  /** Sessions re-read in the last pass. */
+  updated: number;
+  /** Per-session failures from the last pass. */
+  failures: {
+    sessionId: string;
+    error: string;
+  }[];
+  /** Last pass error (whole-pass abort), if any. */
+  error?: string;
+}
+/**
+ * The official archive-set face (workspaceRegistry mirror): read-only.
+ * Resolved lazily per pass — the registry may mount after this plugin.
+ */
+interface SwitchArchiveSource {
+  readonly archivedSessionIds: readonly string[];
+}
+/**
+ * One watermark syncer bound to one open engine. `poll()` is re-entrant-safe:
+ * overlapping calls collapse into the running pass.
+ */
+declare class SwitchWatermarkSync {
+  private readonly engine;
+  private readonly sessionQuery;
+  private readonly readArchiveSource?;
+  private readonly log?;
+  private running;
+  private readonly state;
+  constructor(engine: SwitchIndexEngine, sessionQuery: SwitchSyncSessionQuery, readArchiveSource?: (() => SwitchArchiveSource | undefined) | undefined, log?: ((msg: string) => void) | undefined);
+  /** Current progress snapshot (cloned). */
+  snapshot(): SwitchSyncState;
+  /**
+   * Fold titles for an explicit id set without running a full pass.
+   *
+   * Used by the `session/title` event listener so a rename lands immediately
+   * rather than at the next poll. It deliberately leaves watermarks alone: a
+   * title-only refresh can never make the index claim content it has not read,
+   * and the next poll still re-ingests the session off its bumped version.
+   * Safe for unknown ids — the header write is a no-op when no row exists.
+   * @param sessionIds - sessions whose titles should be re-folded.
+   */
+  refreshTitles(sessionIds: readonly string[]): Promise<void>;
+  /**
+   * Run one incremental pass (or await the running one).
+   * @returns the state after the pass completes.
+   */
+  poll(): Promise<SwitchSyncState>;
+  private runPass;
+  /**
+   * Fold titles for archived header-only rows that never got one (archived
+   * before first indexing). Bounded: only rows with an empty title, and the
+   * title fold reads the log without ingesting content.
+   */
+  private backfillArchivedTitles;
+  /** Fold latest titles for changed sessions into the index header rows. */
+  private backfillTitles;
+}
+//#endregion
+//#region src/host/index/archive-source.d.ts
+/** One resolved archive read: ids plus which source served them. */
+interface SwitchArchiveRead {
+  ids: readonly string[];
+  source: 'registry' | 'storage-file' | 'none';
+}
+/** The workspaceRegistry mirror face (getter only). */
+interface SwitchRegistryFace {
+  readonly archivedSessionIds: readonly string[];
+}
+/** Diagnostics describing how the archive set is being resolved. */
+interface SwitchArchiveDiagnostics {
+  source: 'registry' | 'storage-file' | 'none';
+  ids: number;
+  error?: string;
+}
+/** Build the lazy source face the syncer expects, with diagnostics capture. */
+declare function createArchiveSource(getRegistry: () => SwitchRegistryFace | undefined): {
+  read: () => SwitchArchiveRead;
+  diagnostics: () => SwitchArchiveDiagnostics;
+};
+//#endregion
+//#region src/host/index/rebuild.d.ts
+/** The corpus reader a rebuild needs (same faces as the syncer). */
+interface SwitchRebuildSessionQuery {
+  listSessions(): Promise<readonly {
+    header: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+  }[]>;
+  readSession(sessionId: string): Promise<{
+    session: {
+      id: string;
+      version: number;
+      createdAt?: number;
+      cwd?: string;
+    };
+    events: readonly SwitchRawEvent[];
+  }>;
+}
+/** Live rebuild progress reported to the status endpoint. */
+interface SwitchRebuildState {
+  state: 'idle' | 'building' | 'swapping' | 'error';
+  /** Sessions written into the shadow index so far. */
+  done: number;
+  /** Sessions seen in the corpus when the build started. */
+  total: number;
+  /** Epoch ms when the build started. */
+  startedAt: number;
+  /** Epoch ms when the last build finished. */
+  finishedAt: number;
+  /** Per-session failures during the last build. */
+  failures: {
+    sessionId: string;
+    error: string;
+  }[];
+  error?: string;
+}
+/** Filesystem layout of one index directory. */
+interface SwitchIndexLayout {
+  /** Directory holding every index file. */
+  dir: string;
+  /** Active index file name. */
+  active: string;
+  /** Shadow file name used while building. */
+  building: string;
+  /** Archive file name prefix. */
+  archivePrefix: string;
+}
+/** Default layout names. */
+declare const DEFAULT_INDEX_LAYOUT: SwitchIndexLayout;
+/**
+ * Inspect the index directory for half-built leftovers from an abnormally
+ * terminated rebuild and recover:
+ * - shadow present + active present: the build never finished — the shadow
+ *   is garbage (the active index kept serving) and is discarded.
+ * - shadow present + active missing: the crash hit the rename window — the
+ *   newest archive is restored as the active index, the shadow discarded.
+ * Runs at host activation, before the engine opens (opening would create a
+ * fresh empty active file and mask the swap-window case).
+ */
+declare function recoverIndex(layout: SwitchIndexLayout, log?: (msg: string) => void): Promise<string[]>;
+/**
+ * Build a fresh index into the shadow file, then swap it in atomically.
+ *
+ * During the build the caller's active engine stays open and queryable; only
+ * the final swap briefly reopens the handle.
+ * @param activeEngine - the currently-serving engine (its file is replaced).
+ * @param layout - filesystem layout of the index directory.
+ * @param sessionQuery - corpus reader for the full rebuild.
+ * @param keepArchives - how many archive files to retain (oldest pruned).
+ * @param onProgress - optional progress callback after each session.
+ * @returns the rebuild state snapshot after completion.
+ */
+/** Optional observability callbacks for rebuildIndex. */
+interface SwitchRebuildHooks {
+  /** Progress log line sink (cordis logger bridge). */
+  log?: (msg: string) => void;
+  /** State-mutation sink: called after every change so index-status sees
+   * live progress (the "0/?" bug was state cloned only at completion). */
+  onState?: (state: SwitchRebuildState) => void;
+}
+declare function rebuildIndex(activeEngine: SwitchIndexEngine, layout: SwitchIndexLayout, sessionQuery: SwitchRebuildSessionQuery, keepArchives: number, onProgress?: (done: number, total: number) => void, archiveSource?: () => SwitchArchiveSource | undefined, hooks?: SwitchRebuildHooks): Promise<SwitchRebuildState>;
+/** One doc-level record the snapshot importer feeds in. */
+interface SwitchImportRecord {
+  sessionId: string;
+  version: number;
+  title?: string;
+  docs: readonly {
+    seq: number;
+    type: string;
+    surface: string;
+    time: number;
+    text: string;
+  }[];
+}
+/** Import doc-level records into the shadow file and swap it in (same swap path). */
+declare function importIntoIndex(activeEngine: SwitchIndexEngine, layout: SwitchIndexLayout, records: readonly SwitchImportRecord[], keepArchives: number): Promise<SwitchRebuildState>;
 //#endregion
 //#region src/host/history/archive.d.ts
 /** 一行历史文件条目（尽力而为的元数据 + 磁盘占用）。 */
@@ -1329,6 +1768,53 @@ declare function scanSessions(options: {
   now?: () => number;
 }): HealthScanResult;
 //#endregion
+//#region src/host/index/snapshot.d.ts
+/**
+ * Export the whole active index as a JSON Lines string.
+ * @param engine - the open active engine.
+ * @returns the complete snapshot text (header line first).
+ */
+declare function exportSnapshot(engine: SwitchIndexEngine): string;
+/** One parsed snapshot: importable records plus skipped-line count. */
+interface SwitchParsedSnapshot {
+  records: SwitchImportRecord[];
+  skipped: number;
+}
+/**
+ * Parse a snapshot's JSON Lines text into importable records.
+ * The header line and any malformed line are skipped, not fatal.
+ * @param text - raw snapshot text.
+ * @returns importable records and how many lines were skipped.
+ */
+declare function parseSnapshot(text: string): SwitchParsedSnapshot;
+//#endregion
+//#region src/host/index/peers.d.ts
+/** Resolution outcome for a peer plugin package. */
+type PeerPresence = 'installed' | 'missing' | 'unknown';
+/**
+ * Probe whether a package resolves from this plugin's own module graph.
+ *
+ * The bundle lives at `<profile>/node_modules/dsh-search-index/lib/index.mjs`,
+ * so resolution runs against `<profile>/node_modules` — exactly where a
+ * profile dependency lands, and therefore the same place the host would load
+ * the peer from.
+ *
+ * @param name - the package name to resolve.
+ * @param base - resolution base; defaults to this module's own URL, i.e. the
+ *   plugin's install directory. Injectable so the classification can be tested
+ *   against a fixture that fails in a way this checkout cannot produce.
+ * @returns `installed` when it resolves; `missing` only for a genuine
+ *   module-not-found; `unknown` for every other failure, because an
+ *   unanswerable probe is not evidence of absence.
+ */
+declare function probePeer(name: string, base?: string): PeerPresence;
+/**
+ * Probe whether {@link STEWARD_PACKAGE} is installed alongside this plugin.
+ *
+ * @returns the resolution state, never a throw.
+ */
+declare function detectSteward(): PeerPresence;
+//#endregion
 //#region src/index.d.ts
 /** 本插件声明的宿主服务（与 toggle 相同的注入面）。 */
 declare const inject: string[];
@@ -1337,10 +1823,22 @@ declare const Config: z<Schemastery.ObjectS<NoInfer<{
   enabled: z<boolean, boolean, "volatile-defined">;
   historyFiles: z<boolean, boolean, "volatile-defined">;
   healthCheck: z<boolean, boolean, "volatile-defined">;
+  search: z<boolean, boolean, "volatile-defined">;
+  defaultMode: z<"title" | "content", "title" | "content", "volatile-defined">;
+  autoSync: z<boolean, boolean, "volatile-defined">;
+  syncIntervalMs: z<number, number, "volatile-defined">;
+  archiveKeep: z<number, number, "volatile-defined">;
+  indexDir: z<string, string, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
   enabled: z<boolean, boolean, "volatile-defined">;
   historyFiles: z<boolean, boolean, "volatile-defined">;
   healthCheck: z<boolean, boolean, "volatile-defined">;
+  search: z<boolean, boolean, "volatile-defined">;
+  defaultMode: z<"title" | "content", "title" | "content", "volatile-defined">;
+  autoSync: z<boolean, boolean, "volatile-defined">;
+  syncIntervalMs: z<number, number, "volatile-defined">;
+  archiveKeep: z<number, number, "volatile-defined">;
+  indexDir: z<string, string, "defined">;
 }>>, "plain">;
 /** 运行时依赖。 */
 interface StewardRuntime {
@@ -1370,20 +1868,101 @@ interface StewardRuntime {
  */
 declare const HISTORY_METHODS: readonly ["session-history-list", "session-history-prune", "session-history-purge"];
 declare const HEALTH_METHODS: readonly ["session-health-status", "session-health-scan", "session-health-session", "session-health-repair", "session-health-source-migrate"];
+/** 搜索索引子域方法（`/switch-search/api`；index-export/import 走原始体，其余 JSON）。 */
+declare const INDEX_METHODS: readonly ["list-sessions", "content-search", "search-status", "index-status", "index-rebuild", "index-export", "index-import"];
 /** 依据开关判定某方法是否启用。 */
 declare function methodEnabled(method: string, config: Required<StewardConfig>): boolean;
+/** ------------------------------------------------------------------ 搜索子域 handlers */
 /**
- * 处理一次 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
+ * One session header shape the query service returns (structural subset).
+ */
+interface SwitchSessionHeader {
+  id: string;
+  version: number;
+  createdAt: number;
+  cwd?: string;
+  parentSession?: string;
+  seedLength?: number;
+  delegationDepth?: number;
+  agentPreset?: string;
+}
+/** One logical-session record (structural subset). */
+interface SwitchSessionRecord {
+  header: SwitchSessionHeader;
+  live: boolean;
+  persisted: boolean;
+}
+/** One title observation result (structural subset). */
+interface SwitchTitleObservationResult {
+  status: 'fulfilled' | 'rejected';
+  value?: {
+    session: SwitchSessionHeader;
+    title?: {
+      title: string;
+    };
+  };
+  reason?: unknown;
+}
+/** The session-query service face: corpus reads, title folding, FTS5 search. */
+interface SwitchSessionQuery {
+  listSessions(signal?: AbortSignal): Promise<readonly SwitchSessionRecord[]>;
+  readSession?(sessionId: string): Promise<{
+    session: SwitchSessionHeader;
+    events: readonly SwitchRawEvent[];
+  }>;
+  readTitleSnapshots(sessionIds: readonly string[], signal?: AbortSignal): Promise<readonly SwitchTitleObservationResult[]>;
+  searchSessions?(request: {
+    query: string;
+    eventFilters?: readonly unknown[];
+    limit?: number;
+  }, exec?: {
+    signal?: AbortSignal;
+  }): Promise<{
+    items: readonly unknown[];
+    nextCursor?: string;
+  }>;
+}
+/** ------------------------------------------------------------------ index service */
+/** The per-activation index service state, carried in the apply closure. */
+interface SwitchIndexServiceState {
+  engine: SwitchIndexEngine;
+  sync: SwitchWatermarkSync;
+  layout: SwitchIndexLayout;
+  rebuild: SwitchRebuildState;
+  /** Official archive-set reader (registry first, storage-hub file fallback). */
+  archiveReader: ReturnType<typeof createArchiveSource>;
+}
+/**
+ * Everything the search handlers need, captured from the apply closure: the
+ * optional live sessionQuery, the index service state, and the latest config.
+ * Handlers never touch the cordis context — arbitrary property writes on a
+ * Context are rejected ("cannot set property ... without provide").
+ */
+interface SearchRuntime {
+  sessionQuery: SwitchSessionQuery | undefined;
+  index: SwitchIndexServiceState;
+  config: () => Required<StewardConfig> & SwitchSearchConfig;
+  /** Lazy official archive-set source (registry first, file fallback). */
+  registry: () => {
+    archivedSessionIds: readonly string[];
+  };
+  /** Cordis logger bridge ([session-steward] prefixed). */
+  log: (msg: string) => void;
+}
+/** JSON 面的搜索子域方法分发（index-export/import 走原始体，在路由层特判）。 */
+declare function handleIndexMethod(method: string, payload: unknown, srt: SearchRuntime): Promise<unknown>;
+/**
+ * 处理一次管家子域 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
  * @param method - 路由方法名。
  * @param payload - 已解析的请求体。
  * @param runtime - 运行时依赖。
  */
 declare function handleMethod(method: string, payload: unknown, runtime: StewardRuntime): Promise<unknown>;
 /**
- * 插件主体：装配运行时、挂载 fenced 路由。
- * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、sessions、sessionProjections）。
+ * 插件主体：装配运行时、挂载两条 fenced 路由与索引生命周期。
+ * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、workspaceRegistry）。
  * @param config - 组合条目（0.1.7：`.volatile()` 字段为 live ref）。
  */
-declare function apply(ctx: Context, config?: Partial<StewardConfig>): void;
+declare function apply(ctx: Context, config?: Partial<StewardConfig & SwitchSearchConfig>): void;
 //#endregion
-export { Config, DEFAULT_CONFIG, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, V4_HOST_MIN, apply, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, dirSize, discoverSessions, editWorkspaceDocument, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleMethod, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, prescribe, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };
+export { Config, DEFAULT_CONFIG, DEFAULT_INDEX_LAYOUT, type DiscoveredSession, type GenerationArtifact, HEALTH_METHODS, HISTORY_METHODS, HealthCache, type HealthCacheEntry, INDEX_METHODS, type LogArtifact, type LogCompression, type RepairAssessment, type RepairVerdict, SOURCE_MIGRATE_BACKUP_SUFFIX, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG, SearchRuntime, type SessionGenerations, type SessionPriority, type StewardConfig, StewardRuntime, type SwitchArchiveDiagnostics, SwitchIndexEngine, SwitchIndexServiceState, type SwitchSearchConfig, SwitchWatermarkSync, V4_HOST_MIN, apply, assessRepair, backupFilesIn, buildProjectionOwnerIndex, buildSessionReport, classifyGenerationFilename, countCorpus, createArchiveSource, createAttributor, decodeSessionLogBytes, decodeSessionLogFile, detectSteward, dirSize, discoverSessions, editWorkspaceDocument, exportSnapshot, findSession, findSessionLog, firstLosslessViolation, gateColdRead, gateGeneration, gateLogIntegrity, gateLosslessJson, gateProjectionCache, gateSourceKind, generationLogFilename, handleIndexMethod, handleMethod, importIntoIndex, indexSessionDirs, inject, isLossless, isMigrationStagingFilename, isSafeChild, isSourceMigrateBackupName, latestArtifactMtime, listHistory, locateSessionUsage, methodEnabled, migrateLegacySource, migrateSessionSourceKind, parseGenerationLogFilename, parseSnapshot, prescribe, probePeer, projCacheRootFor, pruneArchiveFile, pruneHistory, purgeHistory, quarantineProjectionCache, readArchiveSet, readProjectionCache, readSessionGenerations, readSourceKindFacts, readTailFacts, rebuildIndex, recoverIndex, scanSessions, scanZstdFrames, sessionPriority, sessionsRootFor };

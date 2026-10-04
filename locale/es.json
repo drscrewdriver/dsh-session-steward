@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Mayordomo de sesión",
+    "description": "Archivos de historial de sesión (visualización y limpieza del archivo) y comprobación de salud de las sesiones (revisión → receta → alta); no toca los registros de sesión, solo operaciones reversibles."
+  }
+}

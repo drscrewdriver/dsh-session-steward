@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Steward",
+    "description": "Session history files (archive browsing & cleanup) and session health checks (checkup → prescription → discharge) — reversible operations only, no touching of session logs."
+  }
+}

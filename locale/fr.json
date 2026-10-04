@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Intendant de session",
+    "description": "Fichiers d'historique de session (consultation et nettoyage des archives) et contrôle de santé des sessions (examen → ordonnance → sortie) ; aucune modification des journaux de session, opérations réversibles uniquement."
+  }
+}

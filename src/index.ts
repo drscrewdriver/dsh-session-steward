@@ -1,11 +1,18 @@
 /**
- * dsh-session-steward 主机半身：一条 fenced HTTP 路由 `/session-steward/api`
- * （与搜索索引插件的 `/switch-search/api` **完全隔离**，方法名一律 `session-*`）。
+ * dsh-session-steward 主机半身（合并包）：两条 fenced HTTP 路由 ——
  *
- * 两个子域由两个开关做 feature gate：
+ * - `/session-steward/api`：管家子域，方法名一律 `session-*`；
+ * - `/switch-search/api`：搜索索引子域（历史前缀，浏览器旧 bundle 依赖），方法名 `index-*`/`list-sessions` 等。
+ *
+ * 三个子域开关（feature gate，关掉不注册对应方法，调用返回显式 disabled 错误，不留空壳）：
  * - `historyFiles`（会话历史文件 / 养老院）：`session-history-*`；
- * - `healthCheck`（健康检查 / 体检）：`session-health-*`。
- * 关掉的子域**不注册对应方法**（调用返回显式 disabled 错误），不留空壳。
+ * - `healthCheck`（健康检查 / 体检）：`session-health-*`；
+ * - `search`（搜索索引）：`index-*` 及侧栏搜索入口。
+ * 另有插件总开关 `enabled`：关闭后不注册任何路由。
+ *
+ * 搜索子域自带独立索引（node:sqlite FTS5，本插件自有的文件，绝非宿主官方
+ * session-query 索引）：`list-sessions` 标题语料、`content-search` 按会话聚合的
+ * 内容搜索、`index-status/rebuild/export/import` 索引生命周期面。
  *
  * 只读诊断 + 可逆处置；不改会话日志、不改历史数据、不静默丢弃字段。
  */
@@ -18,7 +25,10 @@ import {
   DEFAULT_CONFIG,
   STEWARD_API_PREFIX,
   STEWARD_SETTINGS_NAMESPACE,
+  SWITCH_API_PREFIX,
+  SWITCH_DEFAULT_CONFIG,
   type StewardConfig,
+  type SwitchSearchConfig,
 } from './config.ts'
 import { listHistory, pruneHistory, storagePathsFor } from './host/history/archive.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
@@ -30,9 +40,28 @@ import { decodeSessionLogFile } from './host/health/decode.ts'
 import { assessRepair, prescribe, quarantineProjectionCache } from './host/health/repair.ts'
 import { countCorpus, findSession, scanSessions } from './host/health/scan.ts'
 import { gateSourceKind, migrateSessionSourceKind, readSourceKindFacts } from './host/health/source-kind.ts'
+import { SwitchIndexEngine, type SwitchIndexContentType, type SwitchSearchSort } from './host/index/engine.ts'
+import { SwitchWatermarkSync, type SwitchSyncState } from './host/index/sync.ts'
+import { createArchiveSource, type SwitchArchiveDiagnostics } from './host/index/archive-source.ts'
+import { detectSteward } from './host/index/peers.ts'
+// 归档集合的写方（prune）在管家子域：搜索子域只读归档集合把归档会话折进索引
+// 状态（单一写方，一个 owner —— 合并后 owner 就在本包 history 子域）。
+export { createArchiveSource, type SwitchArchiveDiagnostics } from './host/index/archive-source.ts'
+import {
+  DEFAULT_INDEX_LAYOUT,
+  importIntoIndex,
+  listArchives,
+  recoverIndex,
+  rebuildIndex,
+  resolveIndexDir,
+  type SwitchIndexLayout,
+  type SwitchRebuildState,
+} from './host/index/rebuild.ts'
+import { exportSnapshot, parseSnapshot } from './host/index/snapshot.ts'
+import type { SwitchRawEvent } from './host/index/extract.ts'
 
-export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE } from './config.ts'
-export type { StewardConfig } from './config.ts'
+export { DEFAULT_CONFIG, STEWARD_API_PREFIX, STEWARD_SETTINGS_NAMESPACE, SWITCH_API_PREFIX, SWITCH_DEFAULT_CONFIG } from './config.ts'
+export type { StewardConfig, SwitchSearchConfig } from './config.ts'
 export { readArchiveSet, pruneArchiveFile, editWorkspaceDocument } from './host/history/archive-source.ts'
 export { listHistory, pruneHistory } from './host/history/archive.ts'
 export { purgeHistory, locateSessionUsage, indexSessionDirs, isSafeChild, dirSize, sessionsRootFor, projCacheRootFor, isSourceMigrateBackupName, backupFilesIn } from './host/history/purge.ts'
@@ -64,6 +93,11 @@ export { HealthCache } from './host/health/cache.ts'
 export type { HealthCacheEntry } from './host/health/cache.ts'
 export { assessRepair } from './host/health/repair.ts'
 export type { RepairAssessment, RepairVerdict } from './host/health/repair.ts'
+export { SwitchIndexEngine } from './host/index/engine.ts'
+export { SwitchWatermarkSync } from './host/index/sync.ts'
+export { rebuildIndex, importIntoIndex, recoverIndex, DEFAULT_INDEX_LAYOUT } from './host/index/rebuild.ts'
+export { exportSnapshot, parseSnapshot } from './host/index/snapshot.ts'
+export { detectSteward, probePeer } from './host/index/peers.ts'
 
 /** 本插件声明的宿主服务（与 toggle 相同的注入面）。 */
 export const inject = ['webServer', 'webRuntime']
@@ -100,10 +134,28 @@ export const Config = z.object({
   enabled: z.boolean().default(true).volatile(),
   historyFiles: z.boolean().default(true).volatile(),
   healthCheck: z.boolean().default(true).volatile(),
+  search: z.boolean().default(true).volatile(),
+  defaultMode: z.union(['title', 'content']).default('title').volatile(),
+  autoSync: z.boolean().default(true).volatile(),
+  syncIntervalMs: z.number().default(30_000).volatile(),
+  archiveKeep: z.number().default(2).volatile(),
+  indexDir: z.string().default(''),
 })
 
 /** 单次请求体的上限（防御无界读取）。 */
 const MAX_BODY_BYTES = 16 << 20
+
+/** content-search 单次返回的默认会话数上限。 */
+const DEFAULT_LIMIT = 20
+
+/** 独立索引目录的环境变量覆盖。 */
+const INDEX_DIR_ENV = 'DSH_SWITCH_SEARCH_DIR'
+
+/** 改名/自动标题落盘的 log-only 事件（追加进日志，会推 version，水位轮询本可迟到一轮兜住）。 */
+const TITLE_EVENT_TYPE = 'session/title'
+
+/** 改名风暴合并为一次标题折叠（自动标题一轮会连发多条）。 */
+const TITLE_FLUSH_MS = 250
 
 /** 归一化 Host authority，无法解析时为 undefined。 */
 function parseAuthority(authority: string): URL | undefined {
@@ -182,6 +234,12 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(text)
 }
 
+/** 写原始文本响应。 */
+function writeRaw(res: ServerResponse, status: number, contentType: string, body: string): void {
+  res.writeHead(status, { 'content-type': contentType, 'cache-control': 'no-cache' })
+  res.end(body)
+}
+
 /** 会话 id 形状校验（拒绝任意字符串进入路径拼接）。 */
 function asSessionId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
@@ -225,16 +283,370 @@ export const HEALTH_METHODS = [
   'session-health-repair',
   'session-health-source-migrate',
 ] as const
+/** 搜索索引子域方法（`/switch-search/api`；index-export/import 走原始体，其余 JSON）。 */
+export const INDEX_METHODS = [
+  'list-sessions',
+  'content-search',
+  'search-status',
+  'index-status',
+  'index-rebuild',
+  'index-export',
+  'index-import',
+] as const
 
 /** 依据开关判定某方法是否启用。 */
 export function methodEnabled(method: string, config: Required<StewardConfig>): boolean {
   if ((HISTORY_METHODS as readonly string[]).includes(method)) return config.historyFiles !== false
   if ((HEALTH_METHODS as readonly string[]).includes(method)) return config.healthCheck !== false
+  if ((INDEX_METHODS as readonly string[]).includes(method)) return config.search !== false
   return false
 }
 
+/** ------------------------------------------------------------------ 搜索子域 handlers */
+
 /**
- * 处理一次 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
+ * One session header shape the query service returns (structural subset).
+ */
+interface SwitchSessionHeader {
+  id: string
+  version: number
+  createdAt: number
+  cwd?: string
+  parentSession?: string
+  seedLength?: number
+  delegationDepth?: number
+  agentPreset?: string
+}
+
+/** One logical-session record (structural subset). */
+interface SwitchSessionRecord {
+  header: SwitchSessionHeader
+  live: boolean
+  persisted: boolean
+}
+
+/** One title observation result (structural subset). */
+interface SwitchTitleObservationResult {
+  status: 'fulfilled' | 'rejected'
+  value?: { session: SwitchSessionHeader; title?: { title: string } }
+  reason?: unknown
+}
+
+/** The session-query service face: corpus reads, title folding, FTS5 search. */
+interface SwitchSessionQuery {
+  listSessions(signal?: AbortSignal): Promise<readonly SwitchSessionRecord[]>
+  readSession?(sessionId: string): Promise<{
+    session: SwitchSessionHeader
+    events: readonly SwitchRawEvent[]
+  }>
+  readTitleSnapshots(
+    sessionIds: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<readonly SwitchTitleObservationResult[]>
+  searchSessions?(
+    request: { query: string; eventFilters?: readonly unknown[]; limit?: number },
+    exec?: { signal?: AbortSignal },
+  ): Promise<{ items: readonly unknown[]; nextCursor?: string }>
+}
+
+/**
+ * The workspace registry face the search side reads (structural mirror): the
+ * official archive set. Read lazily — the registry may mount after plugins.
+ */
+interface SwitchWorkspaceRegistry {
+  readonly archivedSessionIds: readonly string[]
+}
+
+/** Fold titles for a set of sessions into a sessionId → title map. */
+async function titleMap(
+  sessionQuery: SwitchSessionQuery,
+  sessionIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> {
+  if (sessionIds.length === 0) return new Map()
+  const observations = await sessionQuery.readTitleSnapshots([...new Set(sessionIds)])
+  const map = new Map<string, string>()
+  for (const observation of observations) {
+    if (observation.status !== 'fulfilled' || observation.value === undefined) continue
+    const title = observation.value.title?.title
+    if (typeof title === 'string' && title.trim().length > 0) map.set(observation.value.session.id, title)
+  }
+  return map
+}
+
+/** list-sessions: the title-search corpus (index-served, live fallback). */
+async function listSessions(srt: SearchRuntime): Promise<{ ok: boolean; items?: unknown[]; error?: string }> {
+  const index = srt.index
+  const sessionQuery = srt.sessionQuery
+  // Fast path: the independent index caches every session header (title/cwd/
+  // updatedAt). Serving from it keeps the panel instant — the live-preferred
+  // corpus projection (readTitleSnapshots per session) is what used to blow
+  // the client's 10s timeout on large corpora. A refresh sync runs in the
+  // background so newly created sessions appear on the next open.
+  if (index.engine.isOpen && index.engine.countSessions() > 0) {
+    if (sessionQuery !== undefined && index.sync.snapshot().state !== 'syncing') {
+      void index.sync.poll().catch(() => {})
+    }
+    return {
+      ok: true,
+      items: index.engine.listIndexedSessions().map(session => ({
+        sessionId: session.sessionId,
+        title: session.title,
+        cwd: session.cwd,
+        updatedAt: session.updatedAt,
+      })),
+    }
+  }
+  if (sessionQuery === undefined) {
+    return { ok: false, error: 'sessionQuery 服务不可用，且独立索引尚未建立' }
+  }
+  try {
+    const records = await sessionQuery.listSessions()
+    const titles = await titleMap(sessionQuery, records.map(record => record.header.id))
+    return {
+      ok: true,
+      items: records.map(record => ({
+        sessionId: record.header.id,
+        title: titles.get(record.header.id) ?? '',
+        cwd: record.header.cwd ?? '',
+        updatedAt: record.header.createdAt,
+      })),
+    }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/**
+ * content-search: session-grouped hits from the independent index.
+ * `sortBy: 'time'` orders by session recency (`updatedAt`), anything else by
+ * relevance; the host orders before truncating so the page is honest.
+ */
+async function contentSearch(
+  srt: SearchRuntime,
+  payload: unknown,
+): Promise<{ ok: boolean; items?: unknown[]; error?: string }> {
+  const record = payload as { query?: unknown; limit?: unknown; types?: unknown; sortBy?: unknown } | null
+  const query = typeof record?.query === 'string' ? record.query.trim() : ''
+  if (query === '') return { ok: false, error: '缺少 query' }
+  const requestedLimit = typeof record?.limit === 'number' && Number.isSafeInteger(record.limit)
+    ? record.limit
+    : DEFAULT_LIMIT
+  const limit = Math.min(Math.max(1, requestedLimit), 100)
+  // Unknown or absent ordering degrades to relevance — never to an error, so an
+  // old client half talking to a new host half keeps working.
+  const sortBy: SwitchSearchSort = record?.sortBy === 'time' ? 'time' : 'relevance'
+  let types: readonly SwitchIndexContentType[]
+  if (Array.isArray(record?.types) && record.types.length > 0) {
+    types = record.types.filter((entry): entry is SwitchIndexContentType =>
+      entry === 'all' || entry === 'user' || entry === 'reply' || entry === 'tool')
+  } else {
+    types = ['user', 'reply']
+  }
+  const index = srt.index
+  if (index.engine.isOpen === false) {
+    return { ok: false, error: '独立索引未就绪：请在面板或设置中先建立索引（整理索引）' }
+  }
+  try {
+    return {
+      ok: true,
+      items: index.engine.search({ query, types, limit, sortBy }),
+    }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/** search-status: probe the independent index readiness and progress. */
+async function searchStatus(srt: SearchRuntime): Promise<unknown> {
+  const index = srt.index
+  const sync = index.sync.snapshot()
+  return {
+    ok: true,
+    available: index.engine.isOpen && index.engine.countSessions() > 0,
+    reason: index.engine.isOpen ? undefined : 'not-open',
+    indexing: sync.state === 'syncing',
+    archivedSessions: index.engine.countArchived(),
+    archive: index.archiveReader.diagnostics(),
+    sync,
+    rebuild: index.rebuild,
+  }
+}
+
+/** index-status: full lifecycle surface for the settings row. */
+async function indexStatus(srt: SearchRuntime): Promise<unknown> {
+  const index = srt.index
+  const sync = index.sync.snapshot()
+  let indexed = sync.indexed
+  if (index.engine.isOpen) indexed = index.engine.countSessions()
+  return {
+    ok: true,
+    available: index.engine.isOpen && indexed > 0,
+    archivedSessions: index.engine.isOpen ? index.engine.countArchived() : 0,
+    // 归档子域的 owner 就是本包（history 子域）；保留探针字段形状，旧客户端
+    // 的「会话管家负责」提示语在新包语境下依然为真。
+    steward: detectSteward(),
+    driver: index.engine.driverLabel,
+    archive: index.archiveReader.diagnostics() as SwitchArchiveDiagnostics,
+    dir: index.layout.dir,
+    archives: await listArchives(index.layout).catch(() => []),
+    sync: { ...sync, indexed } satisfies SwitchSyncState,
+    rebuild: index.rebuild,
+  }
+}
+
+/**
+ * index-rebuild: start the non-destructive 整理 (shadow build → atomic swap →
+ * archives). Responds immediately; progress rides index-status.
+ */
+async function indexRebuild(srt: SearchRuntime): Promise<{ ok: boolean; started?: boolean; error?: string }> {
+  const index = srt.index
+  if (index.rebuild.state === 'building' || index.rebuild.state === 'swapping') {
+    return { ok: false, error: '整理已在进行中' }
+  }
+  const sessionQuery = srt.sessionQuery
+  if (sessionQuery === undefined || sessionQuery.readSession === undefined) {
+    return { ok: false, error: 'sessionQuery 服务不可用，无法读取会话日志' }
+  }
+  const config = srt.config()
+  const keepArchives = Math.max(0, config.archiveKeep ?? SWITCH_DEFAULT_CONFIG.archiveKeep)
+  void rebuildIndex(
+    index.engine,
+    index.layout,
+    {
+      listSessions: () => sessionQuery.listSessions(),
+      readSession: async (sessionId: string) => {
+        const snapshot = await sessionQuery.readSession!(sessionId)
+        return { session: snapshot.session, events: snapshot.events }
+      },
+    },
+    keepArchives,
+    undefined,
+    srt.registry,
+    {
+      log: srt.log,
+      onState: (live) => { index.rebuild = live },
+    },
+  ).then((state) => {
+    index.rebuild = state
+  }).catch((err) => {
+    index.rebuild = {
+      state: 'error',
+      done: 0,
+      total: 0,
+      startedAt: Date.now(),
+      finishedAt: 0,
+      failures: [],
+      error: String(err instanceof Error ? err.message : err),
+    }
+  })
+  index.rebuild = { state: 'building', done: 0, total: 0, startedAt: Date.now(), finishedAt: 0, failures: [] }
+  return { ok: true, started: true }
+}
+
+/**
+ * Tombs for the two methods the search package used to own before the
+ * steward merge. A stale client bundle (browser refresh does not reload the
+ * host half) must fail LOUDLY and be told where the feature went — a silent
+ * 404 would read as "archiving is broken".
+ */
+const MOVED_TO_HISTORY: Record<string, string> = {
+  'list-archived': 'session-history-list',
+  'archive-prune': 'session-history-prune',
+}
+
+/** Build the explicit "moved" error body for a tombstoned method. */
+function movedToHistory(method: string): { ok: false; error: string } {
+  const replacement = MOVED_TO_HISTORY[method]
+  return {
+    ok: false,
+    error: `"${method}" 已并入会话管家 history 子域：请改用 POST ${STEWARD_API_PREFIX}/${replacement}`,
+  }
+}
+
+/** index-export: dump the active index as JSON Lines. */
+async function indexExport(srt: SearchRuntime, res: ServerResponse): Promise<void> {
+  const index = srt.index
+  if (index.engine.isOpen === false) {
+    writeJson(res, 200, { ok: false, error: '独立索引未就绪' })
+    return
+  }
+  writeRaw(res, 200, 'application/x-ndjson; charset=utf-8', exportSnapshot(index.engine))
+}
+
+/** index-import: parse a JSON Lines snapshot and swap it in as the active index. */
+async function indexImport(srt: SearchRuntime, text: string) {
+  const index = srt.index
+  if (index.rebuild.state === 'building' || index.rebuild.state === 'swapping') {
+    return { ok: false, error: '整理/导入已在进行中' }
+  }
+  // Body is either raw JSON Lines or a JSON envelope { snapshot: "..." }.
+  if (text.includes('"snapshot"')) {
+    try {
+      const envelope = JSON.parse(text) as { snapshot?: unknown }
+      if (typeof envelope.snapshot === 'string') text = envelope.snapshot
+    } catch { /* treat as plain JSONL */ }
+  }
+  const parsed = parseSnapshot(text)
+  if (parsed.records.length === 0) return { ok: false, error: `快照无可导入会话（跳过 ${parsed.skipped} 行）` }
+  const config = srt.config()
+  const keepArchives = Math.max(0, config.archiveKeep ?? SWITCH_DEFAULT_CONFIG.archiveKeep)
+  void importIntoIndex(index.engine, index.layout, parsed.records, keepArchives)
+    .then((state) => { index.rebuild = state })
+    .catch((err) => {
+      index.rebuild = {
+        state: 'error',
+        done: 0,
+        total: parsed.records.length,
+        startedAt: Date.now(),
+        finishedAt: 0,
+        failures: [],
+        error: String(err instanceof Error ? err.message : err),
+      }
+    })
+  index.rebuild = { state: 'building', done: 0, total: parsed.records.length, startedAt: Date.now(), finishedAt: 0, failures: [] }
+  return { ok: true, started: true, sessions: parsed.records.length, skipped: parsed.skipped }
+}
+
+/** ------------------------------------------------------------------ index service */
+
+/** The per-activation index service state, carried in the apply closure. */
+export interface SwitchIndexServiceState {
+  engine: SwitchIndexEngine
+  sync: SwitchWatermarkSync
+  layout: SwitchIndexLayout
+  rebuild: SwitchRebuildState
+  /** Official archive-set reader (registry first, storage-hub file fallback). */
+  archiveReader: ReturnType<typeof createArchiveSource>
+}
+
+/**
+ * Everything the search handlers need, captured from the apply closure: the
+ * optional live sessionQuery, the index service state, and the latest config.
+ * Handlers never touch the cordis context — arbitrary property writes on a
+ * Context are rejected ("cannot set property ... without provide").
+ */
+export interface SearchRuntime {
+  sessionQuery: SwitchSessionQuery | undefined
+  index: SwitchIndexServiceState
+  config: () => Required<StewardConfig> & SwitchSearchConfig
+  /** Lazy official archive-set source (registry first, file fallback). */
+  registry: () => { archivedSessionIds: readonly string[] }
+  /** Cordis logger bridge ([session-steward] prefixed). */
+  log: (msg: string) => void
+}
+
+/** JSON 面的搜索子域方法分发（index-export/import 走原始体，在路由层特判）。 */
+export async function handleIndexMethod(method: string, payload: unknown, srt: SearchRuntime): Promise<unknown> {
+  if (method === 'list-sessions') return await listSessions(srt)
+  if (method === 'content-search') return await contentSearch(srt, payload)
+  if (method === 'search-status') return await searchStatus(srt)
+  if (method === 'index-status') return await indexStatus(srt)
+  if (method === 'index-rebuild') return await indexRebuild(srt)
+  return { ok: false, error: `未知的 switch-search API 方法 "${method}"` }
+}
+
+/**
+ * 处理一次管家子域 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
  * @param method - 路由方法名。
  * @param payload - 已解析的请求体。
  * @param runtime - 运行时依赖。
@@ -423,17 +835,23 @@ export async function handleMethod(
 }
 
 /**
- * 插件主体：装配运行时、挂载 fenced 路由。
- * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、sessions、sessionProjections）。
+ * 插件主体：装配运行时、挂载两条 fenced 路由与索引生命周期。
+ * @param ctx - host 插件上下文（webServer / webRuntime / 可选 sessionQuery、workspaceRegistry）。
  * @param config - 组合条目（0.1.7：`.volatile()` 字段为 live ref）。
  */
-export function apply(ctx: Context, config: Partial<StewardConfig> = {}): void {
+export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearchConfig> = {}): void {
   // 0.1.7：volatile 字段每次读取解引出最新快照（开关即时生效），不再有任何
   // settings 注册调用。
-  const current = (): Required<StewardConfig> => ({
+  const current = (): Required<StewardConfig> & Required<SwitchSearchConfig> => ({
     enabled: readVolatileValue(config.enabled) ?? DEFAULT_CONFIG.enabled,
     historyFiles: readVolatileValue(config.historyFiles) ?? DEFAULT_CONFIG.historyFiles,
     healthCheck: readVolatileValue(config.healthCheck) ?? DEFAULT_CONFIG.healthCheck,
+    search: readVolatileValue(config.search) ?? DEFAULT_CONFIG.search,
+    defaultMode: readVolatileValue(config.defaultMode) ?? SWITCH_DEFAULT_CONFIG.defaultMode,
+    autoSync: readVolatileValue(config.autoSync) ?? SWITCH_DEFAULT_CONFIG.autoSync,
+    syncIntervalMs: readVolatileValue(config.syncIntervalMs) ?? SWITCH_DEFAULT_CONFIG.syncIntervalMs,
+    archiveKeep: readVolatileValue(config.archiveKeep) ?? SWITCH_DEFAULT_CONFIG.archiveKeep,
+    indexDir: readVolatileValue(config.indexDir) ?? SWITCH_DEFAULT_CONFIG.indexDir,
   })
 
   const log = (message: string): void => {
@@ -495,12 +913,121 @@ export function apply(ctx: Context, config: Partial<StewardConfig> = {}): void {
     cache: new HealthCache(),
   }
 
+  // ── 搜索子域运行时：独立索引生命周期（引擎打开、水位同步、后台轮询）。
+  // 全部是后台工作；HTTP 保持即时。
   const initial = current()
-  if (initial.enabled === false) {
+  const sessionQuery = ctx.get('sessionQuery') as SwitchSessionQuery | undefined
+  const archiveReader = createArchiveSource(() => ctx.get('workspaceRegistry') as SwitchWorkspaceRegistry | undefined)
+  const indexLayout: SwitchIndexLayout = {
+    ...DEFAULT_INDEX_LAYOUT,
+    dir: resolveIndexDir(initial.indexDir || process.env[INDEX_DIR_ENV]),
+  }
+  const engine = new SwitchIndexEngine({ path: `${indexLayout.dir}/${indexLayout.active}` })
+  const indexState: SwitchIndexServiceState = {
+    engine,
+    archiveReader,
+    sync: new SwitchWatermarkSync(engine, {
+      listSessions: () => sessionQuery?.listSessions() ?? Promise.resolve([]),
+      readSession: async (sessionId: string) => {
+        if (sessionQuery?.readSession === undefined) throw new Error('sessionQuery.readSession 不可用')
+        return sessionQuery.readSession(sessionId)
+      },
+      readTitleSnapshots: sessionQuery === undefined
+        ? undefined
+        : (ids) => sessionQuery.readTitleSnapshots(ids),
+    }, () => ({ archivedSessionIds: archiveReader.read().ids }), log),
+    layout: indexLayout,
+    rebuild: { state: 'idle', done: 0, total: 0, startedAt: 0, finishedAt: 0, failures: [] },
+  }
+  const srt: SearchRuntime = {
+    sessionQuery,
+    index: indexState,
+    config: () => current(),
+    registry: () => ({ archivedSessionIds: archiveReader.read().ids }),
+    log,
+  }
+
+  const initialConfig = current()
+  if (initialConfig.enabled === false) {
     log('enabled=false：不注册任何路由')
     return
   }
 
+  let syncTimer: ReturnType<typeof setInterval> | undefined
+  const scheduleSync = (intervalMs: number): void => {
+    if (syncTimer !== undefined) clearInterval(syncTimer)
+    if (intervalMs <= 0) return
+    syncTimer = setInterval(() => {
+      const latest = current()
+      if (latest.enabled === false || latest.search === false || latest.autoSync === false) return
+      void indexState.sync.poll().catch(() => {})
+    }, Math.max(5_000, intervalMs))
+  }
+
+  // Realtime titles. A rename appends the log-only `session/title` event, which
+  // reaches the index one poll later (default 30s). Folding the title straight
+  // off the append feed removes that latency without a full pass. The listener
+  // is deliberately trivial — this feed carries EVERY appended event, streaming
+  // chunks included — and never throws, because it runs inside the host's
+  // fire-and-forget append publication.
+  let pendingTitleIds = new Set<string>()
+  let titleTimer: ReturnType<typeof setTimeout> | undefined
+  const flushPendingTitles = (): void => {
+    titleTimer = undefined
+    const ids = [...pendingTitleIds]
+    pendingTitleIds = new Set()
+    if (ids.length === 0) return
+    void indexState.sync.refreshTitles(ids).catch(() => {})
+  }
+  ctx.effect(() => {
+    const bus = ctx as unknown as {
+      on?: (name: string, listener: (session: { id?: unknown }, event: { type?: unknown }) => void) => () => void
+    }
+    if (typeof bus.on !== 'function') return () => {}
+    try {
+      return bus.on('session/event', (session, event) => {
+        if (event?.type !== TITLE_EVENT_TYPE) return
+        const latest = current()
+        if (latest.enabled === false || latest.search === false || latest.autoSync === false) return
+        const id = session?.id
+        if (typeof id !== 'string' || id === '') return
+        pendingTitleIds.add(id)
+        if (titleTimer !== undefined) return
+        titleTimer = setTimeout(flushPendingTitles, TITLE_FLUSH_MS)
+      })
+    } catch {
+      // No event bus on this host: the poll stays the fallback path.
+      return () => {}
+    }
+  }, 'dsh-session-steward: realtime titles')
+
+  // 索引生命周期：恢复巡检 → 打开引擎 → 首轮水位同步 → 定时轮询。
+  // search=false 时整套不启动（引擎不开、无后台任务）。
+  if (initialConfig.search !== false) {
+    void (async () => {
+      try {
+        const recovered = await recoverIndex(indexLayout, log)
+        if (recovered.length > 0) log(`index recovery applied ${recovered.length} fix(es)`)
+      } catch (err) {
+        log(`index recovery failed: ${String(err instanceof Error ? err.message : err)}`)
+      }
+      await engine.open().catch(() => {})
+      log(`index open: driver=${engine.driverLabel} dir=${indexLayout.dir}`)
+      if (engine.driverLabel === 'node:sqlite') {
+        log('tip: optional speedup not active — approve the better-sqlite3 build (add "better-sqlite3@*: true" under allowBuilds in the profile pnpm-workspace.yaml, then reinstall) to speed up index rebuilds; everything works without it')
+      }
+      if (initialConfig.autoSync !== false) await indexState.sync.poll().catch(() => {})
+      scheduleSync(initialConfig.syncIntervalMs ?? SWITCH_DEFAULT_CONFIG.syncIntervalMs)
+    })()
+  }
+
+  ctx.effect(() => () => {
+    if (syncTimer !== undefined) clearInterval(syncTimer)
+    if (titleTimer !== undefined) clearTimeout(titleTimer)
+    engine.close()
+  }, 'dsh-session-steward: index lifecycle')
+
+  // ── 管家子域路由。
   ctx.effect(() => webServer.register({
     kind: 'prefix',
     path: STEWARD_API_PREFIX,
@@ -529,4 +1056,53 @@ export function apply(ctx: Context, config: Partial<StewardConfig> = {}): void {
       }
     },
   }), 'dsh-session-steward: /session-steward/api route')
+
+  // ── 搜索子域路由（历史前缀 /switch-search/api）。
+  ctx.effect(() => webServer.register({
+    kind: 'prefix',
+    path: SWITCH_API_PREFIX,
+    handler: async (req: IncomingMessage, res: ServerResponse) => {
+      if (!isTrustedApiRequest(req, webRuntime.trustedHosts)) {
+        writeJson(res, 403, { ok: false, error: 'forbidden' })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: 'method not allowed' })
+        return
+      }
+      const pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
+      const prefix = `${SWITCH_API_PREFIX}/`
+      const method = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : undefined
+      if (method === undefined || method === '' || method.includes('/')) {
+        writeJson(res, 404, { ok: false, error: 'unknown switch-search API method' })
+        return
+      }
+      // 墓碑：这两个方法在分包时代属搜索索引包，合并后已归 history 子域。
+      // 旧 client bundle 必须响亮失败并指路，静默 404 会被读成「归档坏了」。
+      if (method in MOVED_TO_HISTORY) {
+        writeJson(res, 410, movedToHistory(method))
+        return
+      }
+      try {
+        if (methodEnabled(method, current()) === false) {
+          writeJson(res, 200, { ok: false, error: `子域已关闭（search=false）：${method} 未注册` })
+          return
+        }
+        if (method === 'index-export') {
+          await indexExport(srt, res)
+          return
+        }
+        if (method === 'index-import') {
+          // The body is raw JSON Lines (or a { snapshot } envelope), not JSON.
+          const text = await readRawBody(req)
+          writeJson(res, 200, await indexImport(srt, text))
+          return
+        }
+        const payload = await readJsonBody(req)
+        writeJson(res, 200, await handleIndexMethod(method, payload, srt))
+      } catch (err) {
+        writeJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) })
+      }
+    },
+  }), 'dsh-session-steward: /switch-search/api route')
 }
