@@ -14,5 +14,6 @@
     "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["src/host/registry"]  // P1 撤编:子类参考实现不进类型检查/构建(devDep 已移除)
 }

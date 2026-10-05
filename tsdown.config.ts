@@ -14,15 +14,9 @@ const ID = 'dsh-session-steward'
 
 export default defineConfig([
   // 主机半身：src/index.ts 产出 lib/index.js（ESM / node）。
-  // 宿主半拆成两个单入口构建:codeSplitting:false 时 rolldown 不允许多输入,
-  // 而多入口共享模块会拆出 chunk 文件 —— files 白名单与部分加载器对多文件
-  // 产物都更脆弱(beta.10 的 chunk 漏发事故)。各入口自包含,重复内联共享模块。
-  ...([
-    { libName: 'index', entryPath: 'src/index.ts', withDts: true },
-    { libName: 'registry', entryPath: 'src/host/registry/archive-registry.ts', withDts: false },
-  ]).map(spec => ({
-    name: `${ID}/lib/${spec.libName}`,
-    entry: { [spec.libName]: spec.entryPath },
+  {
+    name: `${ID}/lib`,
+    entry: { index: 'src/index.ts' },
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
@@ -30,7 +24,7 @@ export default defineConfig([
     outputOptions: { codeSplitting: false },
     // 产出 lib/index.js / lib/index.d.ts（非 .mjs/.d.mts），main/types 解析无需处理扩展名。
     fixedExtension: false,
-    dts: spec.withDts,
+    dts: true,
     clean: false,
     // 框架依赖由 dsh profile 树在运行时解析；@deepseek-ai/dsh-session 仅在可用时软加载。
     deps: {
@@ -39,15 +33,12 @@ export default defineConfig([
         '@deepseek-ai/cordis',
         '@deepseek-ai/schemastery',
         '@deepseek-ai/dsh-session',
-        // P1 服务替换的宿主包:运行时由 profile 树解析（枚举 peer）。
-        '@deepseek-ai/dsh-workspace',
-        '@deepseek-ai/dsh-spill-local',
         // 可选加速驱动（optionalDependencies）：缺失时引擎回退 node:sqlite，
         // 打包器绝不能尝试解析它。
         'better-sqlite3',
       ],
     },
-  })),
+  },
   // 浏览器半身：src/client/index.ts 产出 lib/client.js（ModuleLoader 工厂）。
   {
     name: `${ID}/client`,

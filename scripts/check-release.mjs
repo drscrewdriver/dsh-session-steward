@@ -38,13 +38,13 @@ if (pack.status !== 0) {
   } catch (err) {
     fail(`pack 清单解析失败: ${String(err)}`)
   }
-  for (const required of ['lib/index.js', 'lib/registry.js', 'lib/client.js', 'cordis.patch.yml', 'dsh.plugin.json']) {
+  for (const required of ['lib/index.js', 'lib/client.js', 'cordis.patch.yml', 'dsh.plugin.json']) {
     // npm pack 清单的路径前缀随版本带/不带 package/,用后缀匹配。
     const found = names.some(name => name === required || name.endsWith(`/${required}`))
     if (!found) fail(`tarball 缺少 ${required}`)
   }
   const jsInLib = names.filter(name => /^package\/lib\/[^/]+\.js$/.test(name))
-  const allowed = new Set(['package/lib/index.js', 'package/lib/registry.js', 'package/lib/client.js'])
+  const allowed = new Set(['package/lib/index.js', 'package/lib/client.js'])
   for (const name of jsInLib) {
     if (!allowed.has(name)) fail(`tarball 出现 entry 之外的 lib JS(疑似 chunk): ${name}`)
   }
@@ -54,7 +54,7 @@ if (pack.status !== 0) {
 if (!existsSync(LIB)) {
   fail('lib/ 不存在:请先 npm run build')
 } else {
-  for (const entry of ['index.js', 'registry.js']) {
+  for (const entry of ['index.js']) {
     try {
       await import(pathToFileURL(join(LIB, entry)).href)
     } catch (err) {
