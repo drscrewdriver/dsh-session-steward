@@ -1,8 +1,10 @@
 {
   "name": "dsh-session-steward",
-  "version": "0.5.0-beta.18",
+  "version": "0.5.2",
   "publishConfig": {
-    "tag": "dsh-0.1.7"
+    "registry": "https://registry.npmjs.org",
+    "tag": "latest",
+    "access": "public"
   },
   "description": "DSH Web 插件：会话管家（合并包）—— 会话历史文件（归档浏览与清理）与健康检查（体检 → 处方 → 出院），外加独立 FTS5 会话内容搜索索引（标题/内容双模式、增量同步、非破坏性整理与快照导入导出）。不碰会话日志、只做可逆处置。",
   "keywords": [

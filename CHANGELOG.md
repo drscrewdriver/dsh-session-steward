@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.2（merge-search-index 线转正，0.5.0-beta.1→18 全跨度）
+
+> 本线（merge-search-index 分支）此前以 0.5.0-beta.1→18 迭代，beta.13 曾短暂挂
+> latest；本版转稳定版并接回 latest。beta.14-17 为 pack 迭代（file: 依赖按版本
+> 去重要求同名重打包必 bump，无代码变更）。
+
+### 新增 —— R1 统一搜索索引 + 管理台（beta.1-8）
+
+- 统一 FTS5 内容索引（schema v5）：标题三源供给、收藏/日期筛选，管家面板内置
+  搜索台（Quest 板布局、workspace 定位 chips、分组收拢/展开全部）。
+- **P1 服务替换**：归档/取消归档/清理全部免重启（内存路径直改 +
+  `StewardWorkspaceRegistry` 墓碑），`deleteSession` 七步链；会话删除带内容文件
+  兜底；purge 侧如实上报备份处置（承接 0.4.7/0.4.8 的署名转换与备份审计）。
+
+### 修复 —— 构建自包含（beta.11-13）
+
+- 宿主双入口自包含构建：修复 chunk 漏发导致的整包导入失败；P1 服务替换出发布
+  产物清洗（beta.8-12 事故版本退役，check-release 发布防漏守卫）。
+
+### 新增 —— webServer 设置桥（beta.18，T20-b）
+
+- 两张设置卡（搜索索引 / 会话管家）的数据面改走自家 webServer 桥（describe/
+  mutate），≤0.1.5 宿主上不再依赖 client settings 句柄死路（settingsScope 死路
+  与 configForms 缺席双兜底）——家族节贡献卡契约 §4-2（数据桥化）落线。
+- 注入 prepack=npm run build（stale-build 三防线，320ce31）。
+
 ## 0.4.8
 
 ### 修复 —— ST1：转换对第一方生产者名与宿主分叉

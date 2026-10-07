@@ -1,7 +1,7 @@
 {
   "id": "dsh-session-steward",
   "name": "dsh-session-steward",
-  "version": "0.5.0-beta.18",
+  "version": "0.5.2",
   "description": {
     "en": "Session Steward (merged package): archive browsing & cleanup, a four-gate session health checkup with reversible prescriptions, plus an independent FTS5 content-search index (title/content modes, incremental sync, non-destructive rebuild, snapshot export/import). Never rewrites session logs.",
     "zh": "会话管家（合并包）：归档浏览与清理、四门体检（可逆处方），外加独立 FTS5 会话内容搜索（标题/内容双模式、增量同步、非破坏性整理、快照导入导出）。不改写会话日志。"
