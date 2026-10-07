@@ -10,7 +10,8 @@
  *   一张 key=包名的 plugins.bundle.config 复合卡；不占用 settings.* 席位
  *   （家族节兜底 host 走 2600ms 宽限期，本夹具无 entries 面必然落败——按设计）。
  * - scope 绑定：configForms 以 entry id `dsh-session-steward` 取句柄；缺失时
- *   双命名空间 legacy 回退（session-steward / switch-search）。
+ *   回退 webServer 设置桥 scope（settings-describe/mutate，T20-b）——settingsScope
+ *   bind 是数据死路（台账 A2），不再绑定任何命名空间。
  * - It does NOT render React, and it does NOT prove GUI behaviour.
  *
  * Usage: node tests/client-store.test.mjs
@@ -211,7 +212,7 @@ check('occupies NO settings.* seat in the sync window', () => {
   assert.ok(!ledger.map((o) => o.name).includes('settings.section'))
 })
 
-check('scope prefers configForms (entry id) and falls back to BOTH legacy namespaces', () => {
+check('scope prefers configForms (entry id); legacy fallback = webServer settings bridge (no settingsScope bind)', () => {
   const formsLedger = []
   const formsBindings = []
   const { ctx } = clientCtx(formsLedger, formsBindings)
@@ -223,13 +224,19 @@ check('scope prefers configForms (entry id) and falls back to BOTH legacy namesp
   )
   const legacyLedger = []
   const legacyBindings = []
-  const { ctx: legacyCtx } = clientCtx(legacyLedger, legacyBindings, { withConfigForms: false })
+  const { ctx: legacyCtx } = clientCtx(legacyLedger, legacyBindings, { withConfigForms: false, withScope: true })
   exports.apply(legacyCtx)
   assert.deepEqual(
     [...new Set(legacyBindings)],
-    [STEWARD_NS, SEARCH_NS],
-    'without configForms both legacy namespaces bind (steward + switch-search)',
+    [],
+    'settingsScope.bind 是数据死路（A2），legacy 回退不再绑定任何命名空间',
   )
+  // 桥 scope 存在性：没有 configForms 时 apply 不得抛（桥 scope 在卡片工厂闭包里），
+  // 且家族双卡与页脚双入口照常注册。
+  const family = legacyLedger.filter((o) => o.name === 'dsh-family.tab')
+  assert.equal(family.length, 2, 'legacy fallback must still register both family tab cards')
+  const footer = legacyLedger.filter((o) => o.name === 'sidebar.footer.action')
+  assert.equal(footer.length, 2, 'legacy fallback must still register both footer entries')
 })
 
 // ── The seat-probe warn check retired with the seat itself (0.1.7) ────────────

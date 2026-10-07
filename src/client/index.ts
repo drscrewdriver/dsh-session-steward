@@ -2,8 +2,9 @@
  * 会话管家客户端半身：样式、字典、侧边栏入口（dsh-session-steward）与设置卡。
  *
  * 侧边栏入口点击后打开「养老院 / 体检」双页签对话框；两个页签的可见性由配置开关决定，
- * 关掉的子域不渲染页签，也不留空壳。开关读取走 configForms（0.1.7，entry id 键）/
- * 旧宿主设置服务的订阅快照；配置写入由 volatile 字段自动生成的设置表单承担。
+ * 关掉的子域不渲染页签，也不留空壳。开关读取：configForms（0.1.7，entry id 键）
+ * / legacy 宿主走自家 webServer 设置桥（settingsScope.bind 是数据死路，见
+ * bridge-scope.ts）；配置写入同链路。
  */
 import type { Context } from 'cordis'
 import { createElement, useState, useSyncExternalStore, type ReactElement } from 'react'
@@ -11,11 +12,11 @@ import {
   DEFAULT_CONFIG,
   STEWARD_ENTRY_ID,
   STEWARD_SETTINGS_NAMESPACE,
-  SWITCH_SEARCH_SETTINGS_NAMESPACE,
   type StewardConfig,
   type SwitchSearchConfig,
 } from '../config.ts'
 import { StewardCardScope, StewardSettingsCard, type CardTranslate } from './card.tsx'
+import { searchBridgeScope, stewardBridgeScope, withBridgeFallback, type BridgeScope } from './bridge-scope.ts'
 import { dictionaries, translate, type LocaleKey } from './locales.ts'
 import { StewardFooter, StewardPanel, TAB_HEALTH, TAB_HISTORY } from './panel.tsx'
 // 搜索子域（原 dsh-search-index client 半身）：面板/入口组件、设置卡、
@@ -45,10 +46,7 @@ interface StewardLocaleService {
   register(ns: string, dicts: Record<string, Record<string, string>>): () => void
 }
 
-/** 旧宿主设置服务面（0.1.7 前的回退路径，结构化镜像）。 */
-interface StewardSettingsScope {
-  bind<U>(input: { namespace: string }): (StewardCardScope & { getSnapshot(): { value: U | undefined } }) | undefined
-}
+/** 旧宿主设置服务面（已弃用：≤0.1.5 的 bind 是数据死路，台账 A2——保留类型注释存档）。 */
 
 /** configForms 服务面（0.1.7：以 profile entry id 取句柄）。 */
 interface StewardConfigForms {
@@ -201,17 +199,20 @@ export function apply(ctx: Context): void {
   // 搜索样式与管家样式各自幂等注入；两块类名前缀不同（dsws_ / dss_）不冲突。
   ctx.effect(() => injectSearchStyles(), 'dsh-session-steward: search stylesheet')
 
-  // 0.1.7：configForms 以 entry id 取句柄；旧宿主回退到按命名空间绑定。
-  // 合并后两条子域卡读**同一份** composition entry 快照（管家字段 + 搜索字段
-  // 同 scope），旧宿主才按各自命名空间分流 —— 搜索卡的 switch-search 命名
-  // 空间仅作 legacy 回退路径保留。
+  // 数据面回退链（台账 A2 定案 + 0.1.7 实测补丁）：首选 configForms 原生句柄
+  // （entry id 键），**渲染期**观测到 unavailable（出生死或 loading→死，A2 死
+  // 路签名）就地落桥——自家 webServer 设置桥（settings-describe/mutate，宿主
+  // 半 legacy settings 租约持久化；0.1.7 无 register → 只读真值投影）。两命名
+  // 空间并存不迁移：session-steward / switch-search。
   const configForms = ctx.get('configForms') as StewardConfigForms | undefined
-  const legacySettings = ctx.get('settingsScope') as StewardSettingsScope | undefined
-  const bound = configForms?.get<StewardConfig>(STEWARD_ENTRY_ID)
-    ?? legacySettings?.bind<StewardConfig>({ namespace: STEWARD_SETTINGS_NAMESPACE })
-  // 搜索子域 legacy 回退：旧宿主没有 configForms 时按 switch-search 命名空间绑定。
-  const searchBound = configForms?.get<StewardConfig & SwitchSearchConfig>(STEWARD_ENTRY_ID)
-    ?? legacySettings?.bind<StewardConfig & SwitchSearchConfig>({ namespace: SWITCH_SEARCH_SETTINGS_NAMESPACE })
+  const bound = withBridgeFallback(
+    configForms?.get<StewardConfig>(STEWARD_ENTRY_ID) as BridgeScope<StewardConfig> | undefined,
+    stewardBridgeScope(),
+  )
+  const searchBound = withBridgeFallback(
+    configForms?.get<StewardConfig & SwitchSearchConfig>(STEWARD_ENTRY_ID) as BridgeScope<SwitchSearchConfig> | undefined,
+    searchBridgeScope(),
+  )
 
   const slots = ctx.get('slots') as StewardSlotsService | undefined
   if (slots === undefined) return

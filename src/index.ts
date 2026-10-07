@@ -28,6 +28,7 @@ import {
   STEWARD_SETTINGS_NAMESPACE,
   SWITCH_API_PREFIX,
   SWITCH_DEFAULT_CONFIG,
+  SWITCH_SEARCH_SETTINGS_NAMESPACE,
   type StewardConfig,
   type SwitchSearchConfig,
 } from './config.ts'
@@ -35,6 +36,12 @@ import { archiveHistory, listHistory, pruneHistory, storagePathsFor } from './ho
 import { listFavorites, setFavoriteState } from './host/history/favorites.ts'
 import type { StewardRegistryFace } from './host/history/archive-source.ts'
 import { locateSessionUsage, purgeHistory } from './host/history/purge.ts'
+import {
+  installLegacySettingsBridge,
+  settingsDescribe,
+  settingsMutate,
+  type BridgeState,
+} from './host/settings-bridge.ts'
 import { buildProjectionOwnerIndex, createAttributor, defaultProfileNodeModules } from './host/health/attribution.ts'
 import { HealthCache } from './host/health/cache.ts'
 import { buildSessionReport, type SessionHealthReport } from './host/health/gates.ts'
@@ -283,6 +290,11 @@ export interface StewardRuntime {
    * 不影响任何判定结果）。`apply()` 总是提供实例。
    */
   cache?: HealthCache
+  /**
+   * Legacy 设置桥（≤0.1.5；可选）：老宿主 settings 服务的 register/get/update
+   * 租约。缺省（单测/modern 宿主）= describe 回空投影、mutate 显式拒绝。
+   */
+  settingsBridge?: BridgeState
   /**
    * 搜索索引联动钩子（可选）：管家写侧操作成功后同步翻索引的归档标记 /
    * 删除索引行，消灭"搜索还挂着 30s 前的幽灵"的窗口。缺省（单测/降级）为无联动。
@@ -755,19 +767,55 @@ function validSessionIds(value: unknown): string[] | undefined {
  * @param payload - 已解析的请求体。
  * @param runtime - 运行时依赖。
  */
+/** 现代宿主的只读投影：把运行时配置拆成两命名空间形状（describe 用）。 */
+function configSnapshotProjection(
+  config: Required<StewardConfig> & Partial<SwitchSearchConfig>,
+): Record<string, Record<string, unknown>> {
+  return {
+    [STEWARD_SETTINGS_NAMESPACE]: {
+      enabled: config.enabled,
+      historyFiles: config.historyFiles,
+      healthCheck: config.healthCheck,
+      search: config.search,
+    },
+    [SWITCH_SEARCH_SETTINGS_NAMESPACE]: {
+      enabled: config.enabled,
+      defaultMode: config.defaultMode ?? SWITCH_DEFAULT_CONFIG.defaultMode,
+      autoSync: config.autoSync ?? SWITCH_DEFAULT_CONFIG.autoSync,
+      syncIntervalMs: config.syncIntervalMs ?? SWITCH_DEFAULT_CONFIG.syncIntervalMs,
+      archiveKeep: config.archiveKeep ?? SWITCH_DEFAULT_CONFIG.archiveKeep,
+      indexDir: config.indexDir ?? SWITCH_DEFAULT_CONFIG.indexDir,
+    },
+  }
+}
+
 export async function handleMethod(
   method: string,
   payload: unknown,
   runtime: StewardRuntime,
 ): Promise<unknown> {
   const config = runtime.config()
-  const known = [...HISTORY_METHODS, ...HEALTH_METHODS] as readonly string[]
+  // 设置桥方法不受子域闸管——关掉 enabled/historyFiles/healthCheck 后仍必须
+  // 能读配置（否则卡片永远读不到「把它打开」的开关）。
+  const settingsMethods = method === 'settings-describe' || method === 'settings-mutate'
+  const known = [...HISTORY_METHODS, ...HEALTH_METHODS, 'settings-describe', 'settings-mutate'] as readonly string[]
   if (!known.includes(method)) {
     return { ok: false, error: `未知的 session-steward API 方法 "${method}"` }
   }
-  if (!methodEnabled(method, config)) {
+  if (!settingsMethods && !methodEnabled(method, config)) {
     const which = (HISTORY_METHODS as readonly string[]).includes(method) ? 'historyFiles' : 'healthCheck'
     return { ok: false, error: `子域已关闭（${which}=false）：${method} 未注册` }
+  }
+
+  if (method === 'settings-describe') {
+    const state = runtime.settingsBridge
+    if (state !== undefined && state.bridge !== undefined) return settingsDescribe(state)
+    // modern 宿主（0.1.7+，无 legacy settings 服务）：运行时配置只读投影。
+    return { ok: true, namespaces: configSnapshotProjection(config), writable: false, revision: state?.revision ?? 0 }
+  }
+  if (method === 'settings-mutate') {
+    const state = runtime.settingsBridge ?? { bridge: undefined, revision: 0 }
+    return await settingsMutate(state, payload)
   }
 
   if (method === 'session-history-list') {
@@ -1103,8 +1151,13 @@ export function apply(ctx: Context, config: Partial<StewardConfig & SwitchSearch
   const registry = (): StewardRegistryFace | undefined =>
     ctx.get('workspaceRegistry') as StewardRegistryFace | undefined
 
+  // Legacy 设置桥（≤0.1.5）：同步建 holder，桥面在 ctx.inject(['settings'])
+  // 回调里咬合（0.1.7+ 无 register → 永远空桥 = describe 只读投影）。
+  const settingsBridge: BridgeState = installLegacySettingsBridge(ctx)
+
   const runtime: StewardRuntime = {
     config: () => current(),
+    settingsBridge,
     dshHome: resolvedHome,
     registry,
     projectionStateFor,

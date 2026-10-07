@@ -598,6 +598,20 @@ declare function archiveArchiveFile(ids: readonly string[], log?: (msg: string) 
   file?: string;
 };
 //#endregion
+//#region src/host/settings-bridge.d.ts
+/** 桥对 handleMethod 暴露的面。 */
+interface LegacySettingsBridge {
+  /** 读一个命名空间文档（无文档/非对象 → undefined）。 */
+  get(ns: string): Record<string, unknown> | undefined;
+  /** 合并写一个命名空间文档；宿主拒绝时抛错（调用方转显式失败）。 */
+  update(ns: string, patch: Record<string, unknown>): Promise<void>;
+}
+/** 桥运行时状态（revision 随每次成功写自增，客户端据此识别权威新值）。 */
+interface BridgeState {
+  bridge: LegacySettingsBridge | undefined;
+  revision: number;
+}
+//#endregion
 //#region src/host/health/decode.d.ts
 /** 一次读取的统计与问题清单。 */
 interface SessionLogRead {
@@ -1976,6 +1990,11 @@ interface StewardRuntime {
    */
   cache?: HealthCache;
   /**
+   * Legacy 设置桥（≤0.1.5；可选）：老宿主 settings 服务的 register/get/update
+   * 租约。缺省（单测/modern 宿主）= describe 回空投影、mutate 显式拒绝。
+   */
+  settingsBridge?: BridgeState;
+  /**
    * 搜索索引联动钩子（可选）：管家写侧操作成功后同步翻索引的归档标记 /
    * 删除索引行，消灭"搜索还挂着 30s 前的幽灵"的窗口。缺省（单测/降级）为无联动。
    */
@@ -2089,12 +2108,6 @@ interface SearchRuntime {
 }
 /** JSON 面的搜索子域方法分发（index-export/import 走原始体，在路由层特判）。 */
 declare function handleIndexMethod(method: string, payload: unknown, srt: SearchRuntime): Promise<unknown>;
-/**
- * 处理一次管家子域 API 调用（导出以便单测直接驱动，不需要起 HTTP）。
- * @param method - 路由方法名。
- * @param payload - 已解析的请求体。
- * @param runtime - 运行时依赖。
- */
 declare function handleMethod(method: string, payload: unknown, runtime: StewardRuntime): Promise<unknown>;
 /**
  * 插件主体：装配运行时、挂载两条 fenced 路由与索引生命周期。
