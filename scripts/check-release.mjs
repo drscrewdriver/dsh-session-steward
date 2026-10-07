@@ -33,10 +33,12 @@ if (pack.status !== 0) {
 } else {
   let names = []
   try {
-    // prepack（320ce31 起 = npm run build）的 tsdown 日志会混进 stdout，
-    // 从 JSON 数组真起点（'[{…'）截到结尾再解析——首个 '[' 可能属于日志文本。
+    // prepack（320ce31 起 = npm run build）的 tsdown 日志会混进 stdout，且 npm
+    // pack --json 是 pretty JSON（'[' 与 '{' 之间有换行），首个 '[' 可能属于日志
+    // 文本——用 /\\[\\s*\\{/ 定位数组真起点。
     const out = String(pack.stdout)
-    const start = out.indexOf('[{')
+    const arrayStart = out.match(/\[\s*\{/)
+    const start = arrayStart ? arrayStart.index : -1
     const end = out.lastIndexOf(']')
     if (start < 0 || end <= start) throw new Error('stdout 中没有 JSON 段')
     const parsed = JSON.parse(out.slice(start, end + 1))
