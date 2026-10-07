@@ -33,7 +33,13 @@ if (pack.status !== 0) {
 } else {
   let names = []
   try {
-    const parsed = JSON.parse(pack.stdout)
+    // prepack（320ce31 起 = npm run build）的 tsdown 日志会混进 stdout，
+    // 取首个 '[' 到最后一个 ']' 的 JSON 段落再解析。
+    const out = String(pack.stdout)
+    const start = out.indexOf('[')
+    const end = out.lastIndexOf(']')
+    if (start < 0 || end <= start) throw new Error('stdout 中没有 JSON 段')
+    const parsed = JSON.parse(out.slice(start, end + 1))
     names = (parsed[0]?.files ?? []).map(entry => entry.path)
   } catch (err) {
     fail(`pack 清单解析失败: ${String(err)}`)
