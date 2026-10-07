@@ -34,9 +34,9 @@ if (pack.status !== 0) {
   let names = []
   try {
     // prepack（320ce31 起 = npm run build）的 tsdown 日志会混进 stdout，
-    // 取首个 '[' 到最后一个 ']' 的 JSON 段落再解析。
+    // 从 JSON 数组真起点（'[{…'）截到结尾再解析——首个 '[' 可能属于日志文本。
     const out = String(pack.stdout)
-    const start = out.indexOf('[')
+    const start = out.indexOf('[{')
     const end = out.lastIndexOf(']')
     if (start < 0 || end <= start) throw new Error('stdout 中没有 JSON 段')
     const parsed = JSON.parse(out.slice(start, end + 1))
